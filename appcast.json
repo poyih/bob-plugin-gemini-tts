@@ -4,7 +4,7 @@
     {
       "version": "0.3.1",
       "desc": "将插件描述翻译为中文。",
-      "sha256": "2ec4b11f94ada60ce02bd2b3fd7c999352055b7cc0d9846dbe0f6c8e79f3dcd8",
+      "sha256": "282e6aaa3e355408c2e86884f58c00a0c01e7be82a25637b05cda0b0c475b96d",
       "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v0.3.1/openai-tts-0.3.1.bobplugin",
       "minBobVersion": "1.8.0",
       "timestamp": 1743868800000
