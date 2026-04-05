@@ -1,0 +1,98 @@
+{
+  "identifier": "dev.poyih.bobplugin.openai.tts",
+  "version": "0.2.6",
+  "category": "tts",
+  "name": "OpenAI TTS",
+  "summary": "Use OpenAI TTS API for speech synthesis in Bob.",
+  "icon": "",
+  "author": "poyih",
+  "homepage": "https://platform.openai.com/",
+  "appcast": "",
+  "minBobVersion": "1.8.0",
+  "options": [
+    {
+      "identifier": "apiKey",
+      "type": "text",
+      "title": "OpenAI API Key",
+      "defaultValue": "",
+      "textConfig": {
+        "type": "secure",
+        "placeholderText": "sk-..."
+      }
+    },
+    {
+      "identifier": "model",
+      "type": "menu",
+      "title": "Model",
+      "description": "Select a TTS model.",
+      "defaultValue": "tts-1",
+      "menuValues": [
+        { "title": "tts-1", "value": "tts-1" },
+        { "title": "tts-1-hd", "value": "tts-1-hd" },
+        { "title": "gpt-4o-mini-tts", "value": "gpt-4o-mini-tts" }
+      ]
+    },
+    {
+      "identifier": "voice",
+      "type": "menu",
+      "title": "Voice (tts-1 / tts-1-hd)",
+      "description": "Used when Model is tts-1 or tts-1-hd.",
+      "defaultValue": "alloy",
+      "menuValues": [
+        { "title": "alloy", "value": "alloy" },
+        { "title": "echo", "value": "echo" },
+        { "title": "fable", "value": "fable" },
+        { "title": "onyx", "value": "onyx" },
+        { "title": "nova", "value": "nova" },
+        { "title": "shimmer", "value": "shimmer" }
+      ]
+    },
+    {
+      "identifier": "voiceMini",
+      "type": "menu",
+      "title": "Voice (gpt-4o-mini-tts)",
+      "description": "Used when Model is gpt-4o-mini-tts.",
+      "defaultValue": "marin",
+      "menuValues": [
+        { "title": "alloy", "value": "alloy" },
+        { "title": "ash", "value": "ash" },
+        { "title": "ballad", "value": "ballad" },
+        { "title": "cedar (recommended)", "value": "cedar" },
+        { "title": "coral", "value": "coral" },
+        { "title": "echo", "value": "echo" },
+        { "title": "fable", "value": "fable" },
+        { "title": "marin (recommended)", "value": "marin" },
+        { "title": "onyx", "value": "onyx" },
+        { "title": "nova", "value": "nova" },
+        { "title": "sage", "value": "sage" },
+        { "title": "shimmer", "value": "shimmer" },
+        { "title": "verse", "value": "verse" }
+      ]
+    },
+    {
+      "identifier": "speed",
+      "type": "menu",
+      "title": "Speed",
+      "defaultValue": "1.0",
+      "menuValues": [
+        { "title": "0.5x", "value": "0.5" },
+        { "title": "0.75x", "value": "0.75" },
+        { "title": "1.0x (default)", "value": "1.0" },
+        { "title": "1.25x", "value": "1.25" },
+        { "title": "1.5x", "value": "1.5" },
+        { "title": "2.0x", "value": "2.0" }
+      ]
+    },
+    {
+      "identifier": "instructions",
+      "type": "text",
+      "title": "Instructions",
+      "defaultValue": "",
+      "textConfig": {
+        "type": "visible",
+        "height": 80,
+        "placeholderText": "Control voice style, tone, emotion. Only works with gpt-4o-mini-tts."
+      }
+    }
+  ]
+}

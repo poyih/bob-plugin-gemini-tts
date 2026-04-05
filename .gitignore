@@ -1,0 +1,8 @@
+# Build artifacts
+*.bobplugin
+
+# macOS
+.DS_Store
+
+# Claude
+.claude/
