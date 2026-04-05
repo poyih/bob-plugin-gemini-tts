@@ -7,7 +7,7 @@
   "icon": "",
   "author": "poyih & Claude",
   "homepage": "https://platform.openai.com/",
-  "appcast": "",
+  "appcast": "https://github.com/poyih/bob-plugin-openai-tts/raw/main/appcast.json",
   "minBobVersion": "1.8.0",
   "options": [
     {
