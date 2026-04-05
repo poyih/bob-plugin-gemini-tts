@@ -1,12 +1,12 @@
 {
   "identifier": "dev.poyih.bobplugin.openai.tts",
-  "version": "0.2.6",
+  "version": "0.3.0",
   "category": "tts",
   "name": "OpenAI TTS",
   "summary": "Use OpenAI TTS API for speech synthesis in Bob.",
   "icon": "",
   "author": "poyih & Claude",
-  "homepage": "https://platform.openai.com/",
+  "homepage": "https://github.com/poyih/bob-plugin-openai-tts",
   "appcast": "https://github.com/poyih/bob-plugin-openai-tts/raw/main/appcast.json",
   "minBobVersion": "1.8.0",
   "options": [

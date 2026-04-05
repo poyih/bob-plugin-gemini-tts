@@ -2,6 +2,14 @@
   "identifier": "dev.poyih.bobplugin.openai.tts",
   "versions": [
     {
+      "version": "0.3.0",
+      "desc": "Plugin homepage now links to GitHub project page.",
+      "sha256": "926bc312156d13ea1bcbf66319ffa4f033624ac040427d51d115c44ac89f976a",
+      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v0.3.0/openai-tts-0.3.0.bobplugin",
+      "minBobVersion": "1.8.0",
+      "timestamp": 1775375001000
+    },
+    {
       "version": "0.2.6",
       "desc": "Support tts-1, tts-1-hd, gpt-4o-mini-tts models with voice style instructions.",
       "sha256": "38a6e15b686638f7a0a1862de8bcbc2705557ef751c250f7f719b8d57176d643",
