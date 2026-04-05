@@ -1,6 +1,6 @@
 {
-  "identifier": "dev.poyih.bobplugin.openai.tts",
-  "version": "0.3.1",
+  "identifier": "com.poyih.bobplugin.openai.tts",
+  "version": "0.3.2",
   "category": "tts",
   "name": "OpenAI TTS",
   "summary": "使用 OpenAI TTS API 进行语音合成。",

@@ -1,6 +1,14 @@
 {
-  "identifier": "dev.poyih.bobplugin.openai.tts",
+  "identifier": "com.poyih.bobplugin.openai.tts",
   "versions": [
+    {
+      "version": "0.3.2",
+      "desc": "将包名从 dev 改为 com 前缀。",
+      "sha256": "e318d7644e9bf2b01655078ea92e15afaa84a56c92ea8f57c10c0cf2da1a8eb7",
+      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v0.3.2/openai-tts-0.3.2.bobplugin",
+      "minBobVersion": "1.8.0",
+      "timestamp": 1743868800000
+    },
     {
       "version": "0.3.1",
       "desc": "将插件描述翻译为中文。",
