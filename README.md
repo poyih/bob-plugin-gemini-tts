@@ -14,11 +14,18 @@
 | 选项 | 说明 |
 | --- | --- |
 | **OpenAI API Key** | 你的 OpenAI API 密钥 |
+| **API URL** | 自定义 API 地址，用于代理或兼容服务（默认 `https://api.openai.com`） |
 | **Model** | TTS 模型：`tts-1`、`tts-1-hd`、`gpt-4o-mini-tts` |
 | **Voice (tts-1 / tts-1-hd)** | 音色：alloy、echo、fable、onyx、nova、shimmer |
 | **Voice (gpt-4o-mini-tts)** | 音色：alloy、ash、ballad、cedar、coral、echo、fable、marin、onyx、nova、sage、shimmer、verse |
 | **Speed** | 语速：0.5x ~ 2.0x |
+| **Audio Format** | 音频格式：MP3（默认）、AAC、OPUS、FLAC |
 | **Instructions** | 控制语音风格、语气、情感（仅 `gpt-4o-mini-tts` 支持） |
+
+## 注意事项
+
+- 单次合成文本长度不能超过 4096 个字符。
+- API URL 支持填写完整地址（如 `https://your-proxy.com/v1/audio/speech`）或仅填写域名（如 `https://your-proxy.com`），插件会自动补全路径。
 
 ## 支持的语言
 

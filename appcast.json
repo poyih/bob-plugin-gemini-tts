@@ -2,6 +2,14 @@
   "identifier": "bob-plugin-openai-tts",
   "versions": [
     {
+      "version": "1.0.0",
+      "desc": "支持自定义 API 地址、音频格式选择，改进错误提示，优化代码结构。",
+      "sha256": "e2940b0723ec5e24f5191b4fd7aa66c359b0c4d5112df7e7630f8326583084d8",
+      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v1.0.0/openai-tts-1.0.0.bobplugin",
+      "minBobVersion": "1.8.0",
+      "timestamp": 1743868800000
+    },
+    {
       "version": "0.3.3",
       "desc": "更改包名标识符。",
       "sha256": "efba7e136da02588b493531d3e1b8951601d20bc2a25bb7e4c5f26969766966a",

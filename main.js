@@ -1,5 +1,3 @@
-var OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
-
 var supportedLanguageCodes = [
     'zh-Hans', 'zh-Hant', 'yue', 'en', 'ja', 'ko', 'fr', 'de', 'es', 'it',
     'ru', 'pt', 'pt-pt', 'pt-br', 'nl', 'pl', 'ar', 'hi', 'tr', 'vi',
@@ -7,28 +5,32 @@ var supportedLanguageCodes = [
     'no', 'ro', 'sk', 'sv', 'ta'
 ];
 
+var MAX_TEXT_LENGTH = 4096;
+
 function supportLanguages() {
     return supportedLanguageCodes.slice();
 }
 
-function pluginValidate(completion) {
-    var apiKey = readOption('apiKey');
+function getApiUrl() {
+    var base = readOption('apiUrl') || 'https://api.openai.com';
+    base = base.replace(/\/+$/, '');
+    if (base.indexOf('/v1/audio/speech') !== -1) {
+        return base;
+    }
+    return base + '/v1/audio/speech';
+}
+
+function getVoice() {
     var model = readOption('model');
-    var voice = model === 'gpt-4o-mini-tts' ? readOption('voiceMini') : readOption('voice');
+    return model === 'gpt-4o-mini-tts' ? readOption('voiceMini') : readOption('voice');
+}
 
-    if (!apiKey) {
-        completion({ error: { type: 'param', message: 'OpenAI API Key 不能为空。' } });
+function pluginValidate(completion) {
+    var error = validateOptions();
+    if (error) {
+        completion({ error: error });
         return;
     }
-    if (!model) {
-        completion({ error: { type: 'param', message: '请填写 TTS 模型 ID。' } });
-        return;
-    }
-    if (!voice) {
-        completion({ error: { type: 'param', message: '音色不能为空。' } });
-        return;
-    }
-
     completion({ result: true });
 }
 
@@ -44,21 +46,28 @@ function tts(query, completion) {
         return;
     }
 
-    var model = readOption('model');
-    var voice = model === 'gpt-4o-mini-tts' ? readOption('voiceMini') : readOption('voice');
-    var speed = parseFloat(readOption('speed')) || 1.0;
-    var instructions = readOption('instructions');
-
-    if (!voice) {
-        completion({ error: { type: 'param', message: '请先在插件设置中选择音色。' } });
+    var text = String(query.text).trim();
+    if (text.length > MAX_TEXT_LENGTH) {
+        completion({
+            error: {
+                type: 'param',
+                message: '文本超出 ' + MAX_TEXT_LENGTH + ' 字符限制（当前 ' + text.length + ' 字符）。'
+            }
+        });
         return;
     }
 
+    var model = readOption('model');
+    var voice = getVoice();
+    var speed = parseFloat(readOption('speed')) || 1.0;
+    var format = readOption('responseFormat') || 'mp3';
+    var instructions = readOption('instructions');
+
     var body = {
         model: model,
-        input: String(query.text),
+        input: text,
         voice: voice,
-        response_format: 'mp3',
+        response_format: format,
         speed: speed
     };
     if (instructions && model === 'gpt-4o-mini-tts') {
@@ -67,7 +76,7 @@ function tts(query, completion) {
 
     $http.request({
         method: 'POST',
-        url: OPENAI_TTS_URL,
+        url: getApiUrl(),
         header: {
             Authorization: 'Bearer ' + readOption('apiKey'),
             'Content-Type': 'application/json'
@@ -103,7 +112,7 @@ function tts(query, completion) {
                     raw: {
                         model: model,
                         voice: voice,
-                        format: 'mp3'
+                        format: format
                     }
                 }
             });
@@ -123,19 +132,35 @@ function validateOptions() {
     if (!readOption('model')) {
         return { type: 'param', message: '请先填写 TTS 模型 ID。' };
     }
+    if (!getVoice()) {
+        return { type: 'param', message: '请先在插件设置中选择音色。' };
+    }
     return null;
 }
 
 function parseHttpError(resp) {
     var statusCode = resp.response ? resp.response.statusCode : 0;
-    var message = 'OpenAI 请求失败（HTTP ' + statusCode + '）';
+    var apiMessage = '';
 
     try {
         var body = resp.data;
         if (body && body.error && body.error.message) {
-            message = body.error.message;
+            apiMessage = body.error.message;
         }
     } catch (e) {}
+
+    var context = '';
+    if (statusCode === 401) {
+        context = 'API Key 无效或已过期';
+    } else if (statusCode === 429) {
+        context = '请求过于频繁，请稍后再试';
+    } else if (statusCode >= 500) {
+        context = 'OpenAI 服务暂时不可用，请稍后再试';
+    }
+
+    var message = 'HTTP ' + statusCode;
+    if (context) message += ' - ' + context;
+    if (apiMessage) message += '\n' + apiMessage;
 
     return { type: 'api', message: message };
 }

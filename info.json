@@ -1,6 +1,6 @@
 {
   "identifier": "bob-plugin-openai-tts",
-  "version": "0.3.3",
+  "version": "1.0.0",
   "category": "tts",
   "name": "OpenAI TTS",
   "summary": "使用 OpenAI TTS API 进行语音合成。",
@@ -18,6 +18,17 @@
       "textConfig": {
         "type": "secure",
         "placeholderText": "sk-..."
+      }
+    },
+    {
+      "identifier": "apiUrl",
+      "type": "text",
+      "title": "API URL",
+      "defaultValue": "https://api.openai.com",
+      "desc": "自定义 API 地址，用于代理或兼容服务。留空使用官方地址。",
+      "textConfig": {
+        "type": "visible",
+        "placeholderText": "https://api.openai.com"
       }
     },
     {
@@ -81,6 +92,18 @@
         { "title": "1.25x", "value": "1.25" },
         { "title": "1.5x", "value": "1.5" },
         { "title": "2.0x", "value": "2.0" }
+      ]
+    },
+    {
+      "identifier": "responseFormat",
+      "type": "menu",
+      "title": "Audio Format",
+      "defaultValue": "mp3",
+      "menuValues": [
+        { "title": "MP3 (default)", "value": "mp3" },
+        { "title": "AAC", "value": "aac" },
+        { "title": "OPUS", "value": "opus" },
+        { "title": "FLAC", "value": "flac" }
       ]
     },
     {
