@@ -1,47 +1,43 @@
-# Bob Plugin - OpenAI TTS
+# Bob Plugin - Gemini TTS
 
-[Bob](https://bobtranslate.com/) 的 OpenAI TTS 语音合成插件，支持 `tts-1`、`tts-1-hd` 和 `gpt-4o-mini-tts` 模型。
+使用 Google Gemini TTS API 为 [Bob](https://bobtranslate.com/) 提供语音合成功能。
+
+支持 Gemini 3.1 Flash TTS Preview 和 Gemini 2.5 Flash TTS Preview 模型，提供 30 种预置声音。
 
 ## 安装
 
-1. 下载最新版本的 [openai-tts.bobplugin](https://github.com/poyih/bob-plugin-openai-tts/releases/latest)
-2. 双击文件即可安装到 Bob
+1. 下载最新的 `gemini-tts.bobplugin` 文件
+2. 双击文件安装到 Bob
 
 ## 配置
 
-在 Bob 的插件设置中填写以下信息：
+| 选项 | 必填 | 说明 |
+| --- | --- | --- |
+| API Key | 是 | Gemini API Key，在 [Google AI Studio](https://aistudio.google.com/apikey) 获取 |
+| 自定义 API 地址 | 否 | 默认 `https://generativelanguage.googleapis.com`，支持自定义代理地址 |
+| 模型 | 否 | 默认 `gemini-3.1-flash-tts-preview` |
+| 声音 | 否 | 默认 `Kore`，可选 30 种预置声音 |
+| 语音指令 | 否 | 用于控制语音风格和语气，如"用欢快的语气朗读" |
 
-| 选项 | 说明 |
-| --- | --- |
-| **OpenAI API Key** | 你的 OpenAI API 密钥 |
-| **API URL** | 自定义 API 地址，用于代理或兼容服务（默认 `https://api.openai.com`） |
-| **Model** | TTS 模型：`tts-1`、`tts-1-hd`、`gpt-4o-mini-tts` |
-| **Voice (tts-1 / tts-1-hd)** | 音色：alloy、echo、fable、onyx、nova、shimmer |
-| **Voice (gpt-4o-mini-tts)** | 音色：alloy、ash、ballad、cedar、coral、echo、fable、marin、onyx、nova、sage、shimmer、verse |
-| **Speed** | 语速：0.5x ~ 2.0x |
-| **Audio Format** | 音频格式：MP3（默认）、AAC、OPUS、FLAC |
-| **Instructions** | 控制语音风格、语气、情感（仅 `gpt-4o-mini-tts` 支持） |
+### 预置声音
 
-## 注意事项
+Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalgethi, Laomedeia, Achernar, Alnilam, Schedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
 
-- 单次合成文本长度不能超过 4096 个字符。
-- API URL 支持填写完整地址（如 `https://your-proxy.com/v1/audio/speech`）或仅填写域名（如 `https://your-proxy.com`），插件会自动补全路径。
+### 自定义 API 地址说明
 
-## 支持的语言
+- 填入完整地址（含路径）将直接使用
+- 仅填域名将自动拼接 `/v1beta/models/{model}:generateContent`
 
-中文（简/繁/粤）、英语、日语、韩语、法语、德语、西班牙语、意大利语、俄语、葡萄牙语、荷兰语、波兰语、阿拉伯语、印地语、土耳其语、越南语、泰语、印尼语、马来语、乌克兰语、捷克语、丹麦语、芬兰语、希腊语、希伯来语、匈牙利语、挪威语、罗马尼亚语、斯洛伐克语、瑞典语、泰米尔语
+## 支持语言
+
+中文（简体/繁体）、英语、日语、韩语、法语、德语、西班牙语、意大利语、葡萄牙语、俄语、阿拉伯语、泰语、越南语、印尼语、马来语、土耳其语、波兰语、荷兰语、瑞典语、丹麦语、挪威语、芬兰语、希腊语、捷克语、罗马尼亚语、匈牙利语、斯洛伐克语、乌克兰语、保加利亚语、克罗地亚语、印地语、孟加拉语、泰米尔语、泰卢固语、马拉雅拉姆语、希伯来语、菲律宾语
 
 ## 开发
 
-插件由两个核心文件组成：
-
-- `info.json` — 插件元信息与配置项定义
-- `main.js` — TTS 调用逻辑
-
-构建 `.bobplugin` 文件：
+构建插件：
 
 ```bash
-zip -j openai-tts.bobplugin info.json main.js
+zip -j gemini-tts.bobplugin info.json main.js
 ```
 
 ## License

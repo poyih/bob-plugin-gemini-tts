@@ -1,53 +1,13 @@
 {
-  "identifier": "bob-plugin-openai-tts",
+  "identifier": "bob-plugin-gemini-tts",
   "versions": [
     {
       "version": "1.0.0",
-      "desc": "支持自定义 API 地址、音频格式选择，改进错误提示，优化代码结构。",
-      "sha256": "e2940b0723ec5e24f5191b4fd7aa66c359b0c4d5112df7e7630f8326583084d8",
-      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v1.0.0/openai-tts-1.0.0.bobplugin",
+      "desc": "初始版本，支持 Gemini 3.1 Flash TTS Preview",
+      "sha256": "a7c328a88f47bff964cd99945c42883064e1268d6b40fce715831198b02a2d01",
+      "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.0.0/gemini-tts-1.0.0.bobplugin",
       "minBobVersion": "1.8.0",
-      "timestamp": 1743868800000
-    },
-    {
-      "version": "0.3.3",
-      "desc": "更改包名标识符。",
-      "sha256": "efba7e136da02588b493531d3e1b8951601d20bc2a25bb7e4c5f26969766966a",
-      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v0.3.3/openai-tts-0.3.3.bobplugin",
-      "minBobVersion": "1.8.0",
-      "timestamp": 1743868800000
-    },
-    {
-      "version": "0.3.2",
-      "desc": "将包名从 dev 改为 com 前缀。",
-      "sha256": "e318d7644e9bf2b01655078ea92e15afaa84a56c92ea8f57c10c0cf2da1a8eb7",
-      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v0.3.2/openai-tts-0.3.2.bobplugin",
-      "minBobVersion": "1.8.0",
-      "timestamp": 1743868800000
-    },
-    {
-      "version": "0.3.1",
-      "desc": "将插件描述翻译为中文。",
-      "sha256": "282e6aaa3e355408c2e86884f58c00a0c01e7be82a25637b05cda0b0c475b96d",
-      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v0.3.1/openai-tts-0.3.1.bobplugin",
-      "minBobVersion": "1.8.0",
-      "timestamp": 1743868800000
-    },
-    {
-      "version": "0.3.0",
-      "desc": "Plugin homepage now links to GitHub project page.",
-      "sha256": "926bc312156d13ea1bcbf66319ffa4f033624ac040427d51d115c44ac89f976a",
-      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v0.3.0/openai-tts-0.3.0.bobplugin",
-      "minBobVersion": "1.8.0",
-      "timestamp": 1775375001000
-    },
-    {
-      "version": "0.2.6",
-      "desc": "Support tts-1, tts-1-hd, gpt-4o-mini-tts models with voice style instructions.",
-      "sha256": "38a6e15b686638f7a0a1862de8bcbc2705557ef751c250f7f719b8d57176d643",
-      "url": "https://github.com/poyih/bob-plugin-openai-tts/releases/download/v0.2.6/openai-tts-0.2.6.bobplugin",
-      "minBobVersion": "1.8.0",
-      "timestamp": 1775374734000
+      "timestamp": 1744761600000
     }
   ]
 }

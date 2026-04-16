@@ -1,120 +1,94 @@
 {
-  "identifier": "bob-plugin-openai-tts",
+  "identifier": "bob-plugin-gemini-tts",
   "version": "1.0.0",
   "category": "tts",
-  "name": "OpenAI TTS",
-  "summary": "使用 OpenAI TTS API 进行语音合成。",
+  "name": "Gemini TTS",
+  "summary": "使用 Google Gemini TTS API 进行语音合成。",
   "icon": "",
   "author": "poyih & Claude",
-  "homepage": "https://github.com/poyih/bob-plugin-openai-tts",
-  "appcast": "https://github.com/poyih/bob-plugin-openai-tts/raw/main/appcast.json",
+  "homepage": "https://github.com/poyih/bob-plugin-gemini-tts",
+  "appcast": "https://github.com/poyih/bob-plugin-gemini-tts/raw/main/appcast.json",
   "minBobVersion": "1.8.0",
   "options": [
     {
       "identifier": "apiKey",
       "type": "text",
-      "title": "OpenAI API Key",
+      "title": "API Key",
       "defaultValue": "",
       "textConfig": {
         "type": "secure",
-        "placeholderText": "sk-..."
+        "placeholderText": "请输入 Gemini API Key"
       }
     },
     {
       "identifier": "apiUrl",
       "type": "text",
-      "title": "API URL",
-      "defaultValue": "https://api.openai.com",
-      "desc": "自定义 API 地址，用于代理或兼容服务。留空使用官方地址。",
+      "title": "自定义 API 地址",
+      "defaultValue": "https://generativelanguage.googleapis.com",
+      "desc": "可选，支持填入完整地址或仅填域名",
       "textConfig": {
         "type": "visible",
-        "placeholderText": "https://api.openai.com"
+        "placeholderText": "https://generativelanguage.googleapis.com"
       }
     },
     {
       "identifier": "model",
       "type": "menu",
-      "title": "Model",
-      "description": "Select a TTS model.",
-      "defaultValue": "tts-1",
+      "title": "模型",
+      "defaultValue": "gemini-3.1-flash-tts-preview",
       "menuValues": [
-        { "title": "tts-1", "value": "tts-1" },
-        { "title": "tts-1-hd", "value": "tts-1-hd" },
-        { "title": "gpt-4o-mini-tts", "value": "gpt-4o-mini-tts" }
+        { "title": "Gemini 3.1 Flash TTS", "value": "gemini-3.1-flash-tts-preview" },
+        { "title": "Gemini 2.5 Flash TTS", "value": "gemini-2.5-flash-preview-tts" }
       ]
     },
     {
       "identifier": "voice",
       "type": "menu",
-      "title": "Voice (tts-1 / tts-1-hd)",
-      "description": "Used when Model is tts-1 or tts-1-hd.",
-      "defaultValue": "alloy",
+      "title": "声音",
+      "defaultValue": "Kore",
       "menuValues": [
-        { "title": "alloy", "value": "alloy" },
-        { "title": "echo", "value": "echo" },
-        { "title": "fable", "value": "fable" },
-        { "title": "onyx", "value": "onyx" },
-        { "title": "nova", "value": "nova" },
-        { "title": "shimmer", "value": "shimmer" }
-      ]
-    },
-    {
-      "identifier": "voiceMini",
-      "type": "menu",
-      "title": "Voice (gpt-4o-mini-tts)",
-      "description": "Used when Model is gpt-4o-mini-tts.",
-      "defaultValue": "marin",
-      "menuValues": [
-        { "title": "alloy", "value": "alloy" },
-        { "title": "ash", "value": "ash" },
-        { "title": "ballad", "value": "ballad" },
-        { "title": "cedar (recommended)", "value": "cedar" },
-        { "title": "coral", "value": "coral" },
-        { "title": "echo", "value": "echo" },
-        { "title": "fable", "value": "fable" },
-        { "title": "marin (recommended)", "value": "marin" },
-        { "title": "onyx", "value": "onyx" },
-        { "title": "nova", "value": "nova" },
-        { "title": "sage", "value": "sage" },
-        { "title": "shimmer", "value": "shimmer" },
-        { "title": "verse", "value": "verse" }
-      ]
-    },
-    {
-      "identifier": "speed",
-      "type": "menu",
-      "title": "Speed",
-      "defaultValue": "1.0",
-      "menuValues": [
-        { "title": "0.5x", "value": "0.5" },
-        { "title": "0.75x", "value": "0.75" },
-        { "title": "1.0x (default)", "value": "1.0" },
-        { "title": "1.25x", "value": "1.25" },
-        { "title": "1.5x", "value": "1.5" },
-        { "title": "2.0x", "value": "2.0" }
-      ]
-    },
-    {
-      "identifier": "responseFormat",
-      "type": "menu",
-      "title": "Audio Format",
-      "defaultValue": "mp3",
-      "menuValues": [
-        { "title": "MP3 (default)", "value": "mp3" },
-        { "title": "AAC", "value": "aac" },
-        { "title": "OPUS", "value": "opus" },
-        { "title": "FLAC", "value": "flac" }
+        { "title": "Zephyr - Bright (明亮)", "value": "Zephyr" },
+        { "title": "Puck - Upbeat (欢快)", "value": "Puck" },
+        { "title": "Charon - Informative (信息型)", "value": "Charon" },
+        { "title": "Kore - Firm (沉稳)", "value": "Kore" },
+        { "title": "Fenrir - Excitable (活泼)", "value": "Fenrir" },
+        { "title": "Leda - Youthful (年轻)", "value": "Leda" },
+        { "title": "Orus - Firm (沉稳)", "value": "Orus" },
+        { "title": "Aoede - Breezy (轻快)", "value": "Aoede" },
+        { "title": "Callirrhoe - Easy-going (随和)", "value": "Callirrhoe" },
+        { "title": "Autonoe - Bright (明亮)", "value": "Autonoe" },
+        { "title": "Enceladus - Breathy (气声)", "value": "Enceladus" },
+        { "title": "Iapetus - Clear (清晰)", "value": "Iapetus" },
+        { "title": "Umbriel - Easy-going (随和)", "value": "Umbriel" },
+        { "title": "Algieba - Smooth (柔滑)", "value": "Algieba" },
+        { "title": "Despina - Smooth (柔滑)", "value": "Despina" },
+        { "title": "Erinome - Clear (清晰)", "value": "Erinome" },
+        { "title": "Algenib - Gravelly (沙哑)", "value": "Algenib" },
+        { "title": "Rasalgethi - Informative (信息型)", "value": "Rasalgethi" },
+        { "title": "Laomedeia - Upbeat (欢快)", "value": "Laomedeia" },
+        { "title": "Achernar - Soft (柔和)", "value": "Achernar" },
+        { "title": "Alnilam - Firm (沉稳)", "value": "Alnilam" },
+        { "title": "Schedar - Even (平稳)", "value": "Schedar" },
+        { "title": "Gacrux - Mature (成熟)", "value": "Gacrux" },
+        { "title": "Pulcherrima - Forward (直率)", "value": "Pulcherrima" },
+        { "title": "Achird - Friendly (友好)", "value": "Achird" },
+        { "title": "Zubenelgenubi - Casual (休闲)", "value": "Zubenelgenubi" },
+        { "title": "Vindemiatrix - Gentle (温柔)", "value": "Vindemiatrix" },
+        { "title": "Sadachbia - Lively (生动)", "value": "Sadachbia" },
+        { "title": "Sadaltager - Knowledgeable (博学)", "value": "Sadaltager" },
+        { "title": "Sulafat - Warm (温暖)", "value": "Sulafat" }
       ]
     },
     {
       "identifier": "instructions",
       "type": "text",
-      "title": "Instructions",
+      "title": "语音指令",
       "defaultValue": "",
+      "desc": "可选，用于控制语音风格和语气",
       "textConfig": {
         "type": "visible",
         "height": 80,
-        "placeholderText": "Control voice style, tone, emotion. Only works with gpt-4o-mini-tts."
+        "placeholderText": "如：用欢快的语气朗读、Say cheerfully"
       }
     }
   ]
