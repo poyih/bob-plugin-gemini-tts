@@ -2,6 +2,14 @@
   "identifier": "bob-plugin-gemini-tts",
   "versions": [
     {
+      "version": "1.0.1",
+      "desc": "补充 Gemini audio tags 用法说明",
+      "sha256": "d02dd2b899e0326bea20d39d0d3898247bef51fdac8354306a9d9eb799e1e65d",
+      "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.0.1/gemini-tts-1.0.1.bobplugin",
+      "minBobVersion": "1.8.0",
+      "timestamp": 1776592657000
+    },
+    {
       "version": "1.0.0",
       "desc": "初始版本，支持 Gemini 3.1 Flash TTS Preview",
       "sha256": "a7c328a88f47bff964cd99945c42883064e1268d6b40fce715831198b02a2d01",

@@ -4,6 +4,8 @@
 
 支持 Gemini 3.1 Flash TTS Preview 和 Gemini 2.5 Flash TTS Preview 模型，提供 30 种预置声音。
 
+支持直接在文本中使用 Gemini `audio tags` 控制语气、停顿和情绪。
+
 ## 安装
 
 1. 下载最新的 `gemini-tts.bobplugin` 文件
@@ -27,6 +29,22 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 
 - 填入完整地址（含路径）将直接使用
 - 仅填域名将自动拼接 `/v1beta/models/{model}:generateContent`
+
+## Audio Tags
+
+Gemini TTS 支持在正文中直接插入 `audio tags`。插件会将文本原样发送给 Gemini，因此这类标签无需额外开关。
+
+示例：
+
+```text
+[whispers] 你好。[short pause] 我们开始吧。
+```
+
+建议：
+
+- 将全局风格放在“语音指令”里，例如“用轻松自然的语气朗读”
+- 将局部效果放在正文里，例如 `[short pause]`、`[whispers]`
+- `audio tags` 属于提示词能力，不是严格 SSML，实际效果会随模型和声音略有波动
 
 ## 支持语言
 
