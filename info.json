@@ -1,6 +1,6 @@
 {
   "identifier": "bob-plugin-gemini-tts",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "category": "tts",
   "name": "Gemini TTS",
   "summary": "使用 Google Gemini TTS API 进行语音合成。",

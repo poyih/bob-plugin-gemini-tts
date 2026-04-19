@@ -2,6 +2,116 @@
 // 使用 Gemini 3.1 Flash TTS API 进行语音合成
 
 var BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+var LOG_PREFIX = '[bob-plugin-gemini-tts]';
+var REQUEST_COUNTER = 0;
+var PLUGIN_TIMEOUT_INTERVAL = 120;
+var TTS_REQUEST_TIMEOUT_INTERVAL = 115;
+var CACHE_MAX_ENTRIES = 10;
+var CACHE_MAX_VALUE_CHARS = 3 * 1024 * 1024;
+var AUDIO_CACHE = {};
+var AUDIO_CACHE_ORDER = [];
+
+function nowMs() {
+    return new Date().getTime();
+}
+
+function nextRequestId() {
+    REQUEST_COUNTER += 1;
+    return REQUEST_COUNTER;
+}
+
+function sanitizeLogValue(value) {
+    var str = value == null ? '' : String(value);
+    str = str.replace(/\s+/g, ' ').trim();
+    if (str.length > 200) {
+        return str.substring(0, 197) + '...';
+    }
+    return str;
+}
+
+function logInfo(message) {
+    $log.info(LOG_PREFIX + ' ' + message);
+}
+
+function logError(message) {
+    $log.error(LOG_PREFIX + ' ' + message);
+}
+
+function logTtsInfo(requestId, stage, message) {
+    logInfo('[tts#' + requestId + '] ' + stage + ' ' + message);
+}
+
+function logTtsError(requestId, stage, message) {
+    logError('[tts#' + requestId + '] ' + stage + ' ' + message);
+}
+
+function makeCacheKey(text, lang, apiUrl, model, voice, instructions) {
+    return [
+        apiUrl,
+        model,
+        voice,
+        instructions,
+        lang || '',
+        text || ''
+    ].join('\u0001');
+}
+
+function touchCacheKey(key) {
+    var index = AUDIO_CACHE_ORDER.indexOf(key);
+    if (index !== -1) {
+        AUDIO_CACHE_ORDER.splice(index, 1);
+    }
+    AUDIO_CACHE_ORDER.push(key);
+}
+
+function deleteCacheKey(key) {
+    delete AUDIO_CACHE[key];
+    var index = AUDIO_CACHE_ORDER.indexOf(key);
+    if (index !== -1) {
+        AUDIO_CACHE_ORDER.splice(index, 1);
+    }
+}
+
+function trimAudioCache() {
+    while (AUDIO_CACHE_ORDER.length > CACHE_MAX_ENTRIES) {
+        deleteCacheKey(AUDIO_CACHE_ORDER[0]);
+    }
+}
+
+function getCachedAudioResult(key) {
+    var entry = AUDIO_CACHE[key];
+    if (!entry) {
+        return null;
+    }
+    touchCacheKey(key);
+    return entry;
+}
+
+function setCachedAudioResult(key, result) {
+    if (!result || !result.value || result.value.length > CACHE_MAX_VALUE_CHARS) {
+        return false;
+    }
+
+    AUDIO_CACHE[key] = {
+        result: result,
+        storedAt: nowMs()
+    };
+    touchCacheKey(key);
+    trimAudioCache();
+    return true;
+}
+
+function createTtsResult(wavBase64, model, voice, cacheStatus) {
+    return {
+        type: 'base64',
+        value: wavBase64,
+        raw: {
+            model: model,
+            voice: voice,
+            cache: cacheStatus
+        }
+    };
+}
 
 function base64Decode(base64) {
     // Remove padding
@@ -103,6 +213,10 @@ function supportLanguages() {
     ];
 }
 
+function pluginTimeoutInterval() {
+    return PLUGIN_TIMEOUT_INTERVAL;
+}
+
 function readOption(name) {
     var value = $option[name];
     return value == null ? '' : String(value).trim();
@@ -149,6 +263,44 @@ function validateOptions() {
     return null;
 }
 
+function buildSpeechRequestBody(text, voice) {
+    return {
+        contents: [{ parts: [{ text: text }] }],
+        generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+                voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName: voice }
+                }
+            }
+        }
+    };
+}
+
+function buildValidationPrompt(mode) {
+    if (mode === 'retry') {
+        return 'TTS task. Generate speech audio only and do not generate text. Read aloud exactly this transcript with no extra words: "Hi".';
+    }
+
+    return 'Generate audio only. Read aloud exactly the following text transcript and do not add any extra words or text: "Hi".';
+}
+
+function getApiErrorMessage(resp) {
+    var data = resp && resp.data;
+    if (data && data.error) {
+        return data.error.message || JSON.stringify(data.error);
+    }
+    return '';
+}
+
+function isTtsValidationPromptError(resp) {
+    var statusCode = resp && resp.response ? resp.response.statusCode : 0;
+    var message = getApiErrorMessage(resp);
+
+    return statusCode === 400 &&
+        message.indexOf('should only be used for TTS') !== -1;
+}
+
 function pluginValidate(completion) {
     var error = validateOptions();
     if (error) {
@@ -161,48 +313,44 @@ function pluginValidate(completion) {
     var voice = getVoice();
     var apiUrl = getApiUrl();
 
-    $http.request({
-        method: 'POST',
-        url: apiUrl,
-        header: {
-            'x-goog-api-key': apiKey,
-            'Content-Type': 'application/json'
-        },
-        body: {
-            contents: [{ parts: [{ text: 'Hi' }] }],
-            generationConfig: {
-                responseModalities: ['AUDIO'],
-                speechConfig: {
-                    voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: voice }
-                    }
+    function sendValidationRequest(mode, allowRetry) {
+        $http.request({
+            method: 'POST',
+            url: apiUrl,
+            header: {
+                'x-goog-api-key': apiKey,
+                'Content-Type': 'application/json'
+            },
+            body: buildSpeechRequestBody(buildValidationPrompt(mode), voice),
+            timeout: 30,
+            handler: function (resp) {
+                if (resp.error) {
+                    completion({ error: toServiceError(resp.error) });
+                    return;
                 }
+
+                var statusCode = resp.response ? resp.response.statusCode : 0;
+                if (statusCode !== 200) {
+                    if (allowRetry && isTtsValidationPromptError(resp)) {
+                        sendValidationRequest('retry', false);
+                        return;
+                    }
+
+                    completion({ error: parseHttpError(resp) });
+                    return;
+                }
+
+                completion({ result: true });
             }
-        },
-        timeout: 30,
-        handler: function (resp) {
-            if (resp.error) {
-                completion({ error: toServiceError(resp.error) });
-                return;
-            }
-            var statusCode = resp.response ? resp.response.statusCode : 0;
-            if (statusCode !== 200) {
-                completion({ error: parseHttpError(resp) });
-                return;
-            }
-            completion({ result: true });
-        }
-    });
+        });
+    }
+
+    sendValidationRequest('initial', true);
 }
 
 function parseHttpError(resp) {
     var statusCode = resp.response ? resp.response.statusCode : 0;
-    var data = resp.data;
-    var message = '';
-
-    if (data && data.error) {
-        message = data.error.message || JSON.stringify(data.error);
-    }
+    var message = getApiErrorMessage(resp);
 
     if (statusCode === 400) {
         return { type: 'api', message: message || '请求参数错误', addition: '状态码: 400' };
@@ -245,11 +393,39 @@ function tts(query, completion) {
     var model = getModel();
     var voice = getVoice();
     var instructions = readOption('instructions');
+    var requestId = nextRequestId();
+    var requestStartedAt = nowMs();
+    var apiUrl = getApiUrl();
 
     // Prepend instructions to text if provided
     var inputText = text;
     if (instructions) {
         inputText = instructions + ': ' + text;
+    }
+
+    logTtsInfo(
+        requestId,
+        'start',
+        'chars=' + text.length +
+        ' payload_chars=' + inputText.length +
+        ' instructions=' + (instructions ? 'on' : 'off') +
+        ' model=' + model +
+        ' voice=' + voice
+    );
+
+    var cacheKey = makeCacheKey(text, query.lang, apiUrl, model, voice, instructions);
+    var cachedEntry = getCachedAudioResult(cacheKey);
+    if (cachedEntry) {
+        var cachedResult = createTtsResult(cachedEntry.result.value, model, voice, 'hit');
+        logTtsInfo(
+            requestId,
+            'cache_hit',
+            'total_ms=' + (nowMs() - requestStartedAt) +
+            ' age_ms=' + (nowMs() - cachedEntry.storedAt) +
+            ' wav_base64_chars=' + cachedEntry.result.value.length
+        );
+        completion({ result: cachedResult });
+        return;
     }
 
     var requestBody = {
@@ -270,8 +446,6 @@ function tts(query, completion) {
         }
     };
 
-    var apiUrl = getApiUrl();
-
     $http.request({
         method: 'POST',
         url: apiUrl,
@@ -280,52 +454,88 @@ function tts(query, completion) {
             'Content-Type': 'application/json'
         },
         body: requestBody,
-        timeout: 60,
+        timeout: TTS_REQUEST_TIMEOUT_INTERVAL,
         handler: function (resp) {
+            var requestElapsedMs = nowMs() - requestStartedAt;
+
             if (resp.error) {
+                logTtsError(
+                    requestId,
+                    'network_error',
+                    'request_ms=' + requestElapsedMs +
+                    ' message=' + sanitizeLogValue(resp.error.message || resp.error)
+                );
                 completion({ error: toServiceError(resp.error) });
                 return;
             }
 
             var statusCode = resp.response ? resp.response.statusCode : 0;
             if (statusCode !== 200) {
-                completion({ error: parseHttpError(resp) });
+                var httpError = parseHttpError(resp);
+                logTtsError(
+                    requestId,
+                    'http_error',
+                    'request_ms=' + requestElapsedMs +
+                    ' status=' + statusCode +
+                    ' message=' + sanitizeLogValue(httpError.message + ' ' + (httpError.addition || ''))
+                );
+                completion({ error: httpError });
                 return;
             }
 
             try {
                 var data = resp.data;
                 if (!data || !data.candidates || !data.candidates[0]) {
+                    logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_candidate');
                     completion({ error: { type: 'api', message: 'API 返回数据异常', addition: '未找到有效的候选结果' } });
                     return;
                 }
 
                 var candidate = data.candidates[0];
                 if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
+                    logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_content_part');
                     completion({ error: { type: 'api', message: 'API 返回数据异常', addition: '候选结果中无内容' } });
                     return;
                 }
 
                 var part = candidate.content.parts[0];
                 if (!part.inlineData || !part.inlineData.data) {
+                    logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_audio_data');
                     completion({ error: { type: 'api', message: 'API 返回数据异常', addition: '未找到音频数据' } });
                     return;
                 }
 
                 var pcmBase64 = part.inlineData.data;
+                var convertStartedAt = nowMs();
                 var wavBase64 = pcmToWav(pcmBase64);
+                var convertElapsedMs = nowMs() - convertStartedAt;
+                var totalElapsedMs = nowMs() - requestStartedAt;
+                var result = createTtsResult(wavBase64, model, voice, 'miss');
+                var cacheStored = setCachedAudioResult(cacheKey, result);
+
+                logTtsInfo(
+                    requestId,
+                    'success',
+                    'status=' + statusCode +
+                    ' request_ms=' + requestElapsedMs +
+                    ' convert_ms=' + convertElapsedMs +
+                    ' total_ms=' + totalElapsedMs +
+                    ' cache_store=' + (cacheStored ? 'yes' : 'no') +
+                    ' pcm_base64_chars=' + pcmBase64.length +
+                    ' wav_base64_chars=' + wavBase64.length
+                );
 
                 completion({
-                    result: {
-                        type: 'base64',
-                        value: wavBase64,
-                        raw: {
-                            model: model,
-                            voice: voice
-                        }
-                    }
+                    result: result
                 });
             } catch (e) {
+                logTtsError(
+                    requestId,
+                    'processing_error',
+                    'request_ms=' + requestElapsedMs +
+                    ' total_ms=' + (nowMs() - requestStartedAt) +
+                    ' message=' + sanitizeLogValue(e.message || e)
+                );
                 completion({ error: { type: 'api', message: '音频处理失败', addition: e.message || String(e) } });
             }
         }

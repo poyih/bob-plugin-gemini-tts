@@ -2,6 +2,14 @@
   "identifier": "bob-plugin-gemini-tts",
   "versions": [
     {
+      "version": "1.0.2",
+      "desc": "增加 TTS 耗时日志、内存缓存，并修复 Gemini 2.5 Flash TTS 验证",
+      "sha256": "6d2119102a2e89b258b369d1e2f6bbfa3cdf8842d82fb1aebf2a0df6173f1046",
+      "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.0.2/gemini-tts-1.0.2.bobplugin",
+      "minBobVersion": "1.8.0",
+      "timestamp": 1776599812000
+    },
+    {
       "version": "1.0.1",
       "desc": "补充 Gemini audio tags 用法说明",
       "sha256": "d02dd2b899e0326bea20d39d0d3898247bef51fdac8354306a9d9eb799e1e65d",
