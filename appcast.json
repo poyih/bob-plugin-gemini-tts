@@ -2,6 +2,14 @@
   "identifier": "bob-plugin-gemini-tts",
   "versions": [
     {
+      "version": "1.1.0",
+      "desc": "新增 Gemini 2.5 Pro TTS 模型；minBobVersion 升级到 1.20.0",
+      "sha256": "14060cc51c0e50340457435f283bee5225f3228fce682ab17eed006eb72ed18d",
+      "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.1.0/gemini-tts-1.1.0.bobplugin",
+      "minBobVersion": "1.20.0",
+      "timestamp": 1780469591000
+    },
+    {
       "version": "1.0.2",
       "desc": "增加 TTS 耗时日志、内存缓存，并修复 Gemini 2.5 Flash TTS 验证",
       "sha256": "6d2119102a2e89b258b369d1e2f6bbfa3cdf8842d82fb1aebf2a0df6173f1046",

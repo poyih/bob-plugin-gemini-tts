@@ -1,5 +1,5 @@
 // Bob TTS Plugin - Google Gemini TTS
-// 使用 Gemini 3.1 Flash TTS API 进行语音合成
+// 使用 Google Gemini TTS API 进行语音合成（支持 Gemini 3.1 Flash / 2.5 Pro / 2.5 Flash TTS）
 
 var BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 var LOG_PREFIX = '[bob-plugin-gemini-tts]';

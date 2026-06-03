@@ -1,6 +1,6 @@
 {
   "identifier": "bob-plugin-gemini-tts",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "category": "tts",
   "name": "Gemini TTS",
   "summary": "使用 Google Gemini TTS API 进行语音合成。",
@@ -8,7 +8,7 @@
   "author": "poyih & Claude",
   "homepage": "https://github.com/poyih/bob-plugin-gemini-tts",
   "appcast": "https://github.com/poyih/bob-plugin-gemini-tts/raw/main/appcast.json",
-  "minBobVersion": "1.8.0",
+  "minBobVersion": "1.20.0",
   "options": [
     {
       "identifier": "apiKey",
@@ -38,6 +38,7 @@
       "defaultValue": "gemini-3.1-flash-tts-preview",
       "menuValues": [
         { "title": "Gemini 3.1 Flash TTS", "value": "gemini-3.1-flash-tts-preview" },
+        { "title": "Gemini 2.5 Pro TTS", "value": "gemini-2.5-pro-preview-tts" },
         { "title": "Gemini 2.5 Flash TTS", "value": "gemini-2.5-flash-preview-tts" }
       ]
     },

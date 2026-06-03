@@ -2,9 +2,11 @@
 
 使用 Google Gemini TTS API 为 [Bob](https://bobtranslate.com/) 提供语音合成功能。
 
-支持 Gemini 3.1 Flash TTS Preview 和 Gemini 2.5 Flash TTS Preview 模型，提供 30 种预置声音。
+支持 Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 模型，提供 30 种预置声音。
 
 支持直接在文本中使用 Gemini `audio tags` 控制语气、停顿和情绪。
+
+> 需要 Bob ≥ 1.20.0。
 
 ## 安装
 
@@ -17,9 +19,17 @@
 | --- | --- | --- |
 | API Key | 是 | Gemini API Key，在 [Google AI Studio](https://aistudio.google.com/apikey) 获取 |
 | 自定义 API 地址 | 否 | 默认 `https://generativelanguage.googleapis.com`，支持自定义代理地址 |
-| 模型 | 否 | 默认 `gemini-3.1-flash-tts-preview` |
+| 模型 | 否 | 默认 `gemini-3.1-flash-tts-preview`，可选 2.5 Pro / 2.5 Flash |
 | 声音 | 否 | 默认 `Kore`，可选 30 种预置声音 |
 | 语音指令 | 否 | 用于控制语音风格和语气，如"用欢快的语气朗读" |
+
+### 模型选择
+
+| 模型 | 模型 ID | 特点 |
+| --- | --- | --- |
+| Gemini 3.1 Flash TTS | `gemini-3.1-flash-tts-preview` | 最新，表现力与可控性更佳（默认） |
+| Gemini 2.5 Pro TTS | `gemini-2.5-pro-preview-tts` | 偏高质量 |
+| Gemini 2.5 Flash TTS | `gemini-2.5-flash-preview-tts` | 偏低延迟 |
 
 ### 预置声音
 
