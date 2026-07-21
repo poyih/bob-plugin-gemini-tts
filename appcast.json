@@ -2,6 +2,14 @@
   "identifier": "bob-plugin-gemini-tts",
   "versions": [
     {
+      "version": "1.2.1",
+      "desc": "修复 pt-BR 语种代码、回退请求超时、调整 finishReason 处理顺序，并加固 base64 解码、缓存键与校验回调契约",
+      "sha256": "ce293fcb152feeb804ad41c84f4c559807767100312a807dc8fa1236a27d4016",
+      "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.2.1/gemini-tts-1.2.1.bobplugin",
+      "minBobVersion": "1.20.0",
+      "timestamp": 1784648805412
+    },
+    {
       "version": "1.2.0",
       "desc": "修复自定义 API 地址为部分路径时 URL 拼接重复的问题；解析音频 mimeType、检查 finishReason、加固 base64 解码与超时余量，改进错误诊断",
       "sha256": "924597af9102e321a1b7ccd004692a468adbf8b39575b32e266db7ca03674970",
