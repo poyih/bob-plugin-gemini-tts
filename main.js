@@ -5,7 +5,7 @@ var BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234567
 var LOG_PREFIX = '[bob-plugin-gemini-tts]';
 var REQUEST_COUNTER = 0;
 var PLUGIN_TIMEOUT_INTERVAL = 120;
-var TTS_REQUEST_TIMEOUT_INTERVAL = 100;
+var TTS_REQUEST_TIMEOUT_INTERVAL = 115;
 var CACHE_MAX_ENTRIES = 10;
 var CACHE_MAX_VALUE_CHARS = 3 * 1024 * 1024;
 var AUDIO_CACHE = {};
@@ -46,14 +46,8 @@ function logTtsError(requestId, stage, message) {
 }
 
 function makeCacheKey(text, lang, apiUrl, model, voice, instructions) {
-    return [
-        apiUrl,
-        model,
-        voice,
-        instructions,
-        lang || '',
-        text || ''
-    ].join('\u0001');
+    // JSON.stringify is separator-safe: no field content can mimic or introduce a delimiter
+    return JSON.stringify([apiUrl, model, voice, instructions, lang || '', text || '']);
 }
 
 function touchCacheKey(key) {
@@ -124,6 +118,10 @@ function base64Decode(base64) {
     // Remove padding
     str = str.replace(/=+$/, '');
     var len = str.length;
+    // A lone trailing char (len % 4 === 1) is not valid base64
+    if (len % 4 === 1) {
+        throw new Error('invalid base64 payload');
+    }
     var byteLen = (len * 3) >> 2;
     var bytes = new Uint8Array(byteLen);
     var p = 0;
@@ -131,12 +129,16 @@ function base64Decode(base64) {
     for (var i = 0; i < len; i += 4) {
         var a = BASE64_CHARS.indexOf(str.charAt(i));
         var b = BASE64_CHARS.indexOf(str.charAt(i + 1));
-        var c = BASE64_CHARS.indexOf(str.charAt(i + 2));
-        var d = BASE64_CHARS.indexOf(str.charAt(i + 3));
 
         bytes[p++] = (a << 2) | (b >> 4);
-        if (c !== -1) bytes[p++] = ((b & 0x0f) << 4) | (c >> 2);
-        if (d !== -1) bytes[p++] = ((c & 0x03) << 6) | d;
+        if (i + 2 < len) {
+            var c = BASE64_CHARS.indexOf(str.charAt(i + 2));
+            bytes[p++] = ((b & 0x0f) << 4) | (c >> 2);
+            if (i + 3 < len) {
+                var d = BASE64_CHARS.indexOf(str.charAt(i + 3));
+                bytes[p++] = ((c & 0x03) << 6) | d;
+            }
+        }
     }
 
     return bytes;
@@ -233,7 +235,7 @@ function pcmToWav(pcmBase64, mimeType) {
 function supportLanguages() {
     return [
         'auto', 'zh-Hans', 'zh-Hant', 'en', 'ja', 'ko',
-        'fr', 'de', 'es', 'it', 'pt', 'pt-BR', 'ru',
+        'fr', 'de', 'es', 'it', 'pt', 'pt-br', 'ru',
         'ar', 'th', 'vi', 'id', 'ms', 'tr', 'pl',
         'nl', 'sv', 'da', 'nb', 'fi', 'el', 'cs',
         'ro', 'hu', 'sk', 'uk', 'bg', 'hr', 'hi',
@@ -335,7 +337,11 @@ function getApiErrorMessage(resp) {
     }
     // Non-JSON error body (e.g. an HTML gateway page from a proxy)
     if (data && typeof data === 'string' && data.trim()) {
-        return sanitizeLogValue(data);
+        var msg = data.replace(/\s+/g, ' ').trim();
+        if (msg.length > 500) {
+            return msg.substring(0, 497) + '...';
+        }
+        return msg;
     }
     return '';
 }
@@ -351,7 +357,7 @@ function isTtsValidationPromptError(resp) {
 function pluginValidate(completion) {
     var error = validateOptions();
     if (error) {
-        completion({ error: error });
+        completion({ result: false, error: error });
         return;
     }
 
@@ -373,7 +379,7 @@ function pluginValidate(completion) {
             timeout: 30,
             handler: function (resp) {
                 if (resp.error) {
-                    completion({ error: toServiceError(resp.error) });
+                    completion({ result: false, error: toServiceError(resp.error) });
                     return;
                 }
 
@@ -384,7 +390,7 @@ function pluginValidate(completion) {
                         return;
                     }
 
-                    completion({ error: parseHttpError(resp) });
+                    completion({ result: false, error: parseHttpError(resp) });
                     return;
                 }
 
@@ -534,16 +540,14 @@ function tts(query, completion) {
 
                     var candidate = data.candidates[0];
                     var finishReason = candidate.finishReason;
-                    if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
-                        logTtsError(requestId, 'filtered', 'request_ms=' + requestElapsedMs + ' finishReason=' + finishReason);
-                        finish({ error: { type: 'api', message: '内容被安全过滤，无法生成音频', addition: 'finishReason: ' + finishReason } });
-                        return;
-                    }
-                    if (finishReason === 'MAX_TOKENS') {
-                        logTtsInfo(requestId, 'partial', 'request_ms=' + requestElapsedMs + ' finishReason=MAX_TOKENS (audio may be truncated)');
-                    }
 
                     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
+                        // No content at all: surface a precise cause when the model filtered it
+                        if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
+                            logTtsError(requestId, 'filtered', 'request_ms=' + requestElapsedMs + ' finishReason=' + finishReason);
+                            finish({ error: { type: 'api', message: '内容被安全过滤，无法生成音频', addition: 'finishReason: ' + finishReason } });
+                            return;
+                        }
                         logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_content_part');
                         finish({ error: { type: 'api', message: 'API 返回数据异常', addition: '候选结果中无内容' } });
                         return;
@@ -554,6 +558,14 @@ function tts(query, completion) {
                         logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_audio_data');
                         finish({ error: { type: 'api', message: 'API 返回数据异常', addition: '未找到音频数据' } });
                         return;
+                    }
+
+                    // Audio is present. Note any non-STOP finishReason but still return the audio
+                    // (matches v1.1.0 behavior of returning whatever audio was generated).
+                    if (finishReason === 'MAX_TOKENS') {
+                        logTtsInfo(requestId, 'partial', 'request_ms=' + requestElapsedMs + ' finishReason=MAX_TOKENS (audio may be truncated)');
+                    } else if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
+                        logTtsInfo(requestId, 'partial', 'request_ms=' + requestElapsedMs + ' finishReason=' + finishReason + ' (content filtered, returning available audio)');
                     }
 
                     var pcmBase64 = part.inlineData.data;
