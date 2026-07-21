@@ -5,7 +5,7 @@ var BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234567
 var LOG_PREFIX = '[bob-plugin-gemini-tts]';
 var REQUEST_COUNTER = 0;
 var PLUGIN_TIMEOUT_INTERVAL = 120;
-var TTS_REQUEST_TIMEOUT_INTERVAL = 115;
+var TTS_REQUEST_TIMEOUT_INTERVAL = 100;
 var CACHE_MAX_ENTRIES = 10;
 var CACHE_MAX_VALUE_CHARS = 3 * 1024 * 1024;
 var AUDIO_CACHE = {};
@@ -114,8 +114,15 @@ function createTtsResult(wavBase64, model, voice, cacheStatus) {
 }
 
 function base64Decode(base64) {
+    // Strip whitespace (incl. MIME-style line breaks every 76 chars) and map URL-safe chars
+    var str = String(base64).replace(/\s+/g, '');
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    // Reject stray bytes outside the base64 alphabet (padding allowed)
+    if (!/^[A-Za-z0-9+/]*=*$/.test(str)) {
+        throw new Error('invalid base64 payload');
+    }
     // Remove padding
-    var str = base64.replace(/=+$/, '');
+    str = str.replace(/=+$/, '');
     var len = str.length;
     var byteLen = (len * 3) >> 2;
     var bytes = new Uint8Array(byteLen);
@@ -159,13 +166,34 @@ function writeString(view, offset, str) {
     }
 }
 
-function pcmToWav(pcmBase64) {
+function parsePcmFormat(mimeType) {
+    var type = String(mimeType || '').toLowerCase();
+
+    // Containered/encoded formats cannot be wrapped as raw PCM WAV
+    if (type && (type.indexOf('wav') !== -1 || type.indexOf('mpeg') !== -1 ||
+                 type.indexOf('mp3') !== -1 || type.indexOf('ogg') !== -1 ||
+                 type.indexOf('opus') !== -1 || type.indexOf('webm') !== -1)) {
+        throw new Error('unsupported audio mimeType: ' + type +
+            ' (expected raw PCM such as audio/L16;rate=24000)');
+    }
+
+    var sampleRate = 24000;
+    var rateMatch = type.match(/rate=(\d+)/);
+    if (rateMatch) {
+        sampleRate = parseInt(rateMatch[1], 10);
+    }
+
+    return { sampleRate: sampleRate, numChannels: 1, bitsPerSample: 16 };
+}
+
+function pcmToWav(pcmBase64, mimeType) {
     var pcmData = base64Decode(pcmBase64);
     var pcmLen = pcmData.length;
 
-    var sampleRate = 24000;
-    var numChannels = 1;
-    var bitsPerSample = 16;
+    var fmt = parsePcmFormat(mimeType);
+    var sampleRate = fmt.sampleRate;
+    var numChannels = fmt.numChannels;
+    var bitsPerSample = fmt.bitsPerSample;
     var byteRate = sampleRate * numChannels * (bitsPerSample / 8);
     var blockAlign = numChannels * (bitsPerSample / 8);
 
@@ -230,6 +258,11 @@ function getVoice() {
     return readOption('voice') || 'Kore';
 }
 
+function endsWith(str, suffix) {
+    return str.length >= suffix.length &&
+        str.substring(str.length - suffix.length) === suffix;
+}
+
 function getApiUrl() {
     var base = readOption('apiUrl') || 'https://generativelanguage.googleapis.com';
     base = base.replace(/\/+$/, '');
@@ -241,9 +274,19 @@ function getApiUrl() {
         return base;
     }
 
-    // If URL contains /v1beta/models/, append :generateContent
+    // If URL already points at a specific model, append :generateContent
     if (base.indexOf('/v1beta/models/') !== -1) {
         return base + ':generateContent';
+    }
+
+    // If URL ends at the bare models directory, append the model segment
+    if (endsWith(base, '/v1beta/models')) {
+        return base + '/' + model + ':generateContent';
+    }
+
+    // If URL ends at /v1beta, append the models path
+    if (endsWith(base, '/v1beta')) {
+        return base + '/models/' + model + ':generateContent';
     }
 
     // Otherwise append full path
@@ -290,6 +333,10 @@ function getApiErrorMessage(resp) {
     if (data && data.error) {
         return data.error.message || JSON.stringify(data.error);
     }
+    // Non-JSON error body (e.g. an HTML gateway page from a proxy)
+    if (data && typeof data === 'string' && data.trim()) {
+        return sanitizeLogValue(data);
+    }
     return '';
 }
 
@@ -319,7 +366,8 @@ function pluginValidate(completion) {
             url: apiUrl,
             header: {
                 'x-goog-api-key': apiKey,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
             },
             body: buildSpeechRequestBody(buildValidationPrompt(mode), voice),
             timeout: 30,
@@ -376,15 +424,22 @@ function toServiceError(error) {
 }
 
 function tts(query, completion) {
+    var done = false;
+    function finish(result) {
+        if (done) return;
+        done = true;
+        completion(result);
+    }
+
     var error = validateOptions();
     if (error) {
-        completion({ error: error });
+        finish({ error: error });
         return;
     }
 
     var text = query.text;
     if (!text || !text.trim()) {
-        completion({ error: { type: 'param', message: '文本不能为空' } });
+        finish({ error: { type: 'param', message: '文本不能为空' } });
         return;
     }
     text = text.trim();
@@ -424,120 +479,124 @@ function tts(query, completion) {
             ' age_ms=' + (nowMs() - cachedEntry.storedAt) +
             ' wav_base64_chars=' + cachedEntry.result.value.length
         );
-        completion({ result: cachedResult });
+        finish({ result: cachedResult });
         return;
     }
 
-    var requestBody = {
-        contents: [
-            {
-                parts: [{ text: inputText }]
-            }
-        ],
-        generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-                voiceConfig: {
-                    prebuiltVoiceConfig: {
-                        voiceName: voice
+    var requestBody = buildSpeechRequestBody(inputText, voice);
+
+    try {
+        $http.request({
+            method: 'POST',
+            url: apiUrl,
+            header: {
+                'x-goog-api-key': apiKey,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: requestBody,
+            timeout: TTS_REQUEST_TIMEOUT_INTERVAL,
+            handler: function (resp) {
+                var requestElapsedMs = nowMs() - requestStartedAt;
+
+                if (resp.error) {
+                    logTtsError(
+                        requestId,
+                        'network_error',
+                        'request_ms=' + requestElapsedMs +
+                        ' message=' + sanitizeLogValue(resp.error.message || resp.error)
+                    );
+                    finish({ error: toServiceError(resp.error) });
+                    return;
+                }
+
+                var statusCode = resp.response ? resp.response.statusCode : 0;
+                if (statusCode !== 200) {
+                    var httpError = parseHttpError(resp);
+                    logTtsError(
+                        requestId,
+                        'http_error',
+                        'request_ms=' + requestElapsedMs +
+                        ' status=' + statusCode +
+                        ' message=' + sanitizeLogValue(httpError.message + ' ' + (httpError.addition || ''))
+                    );
+                    finish({ error: httpError });
+                    return;
+                }
+
+                try {
+                    var data = resp.data;
+                    if (!data || !data.candidates || !data.candidates[0]) {
+                        logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_candidate');
+                        finish({ error: { type: 'api', message: 'API 返回数据异常', addition: '未找到有效的候选结果' } });
+                        return;
                     }
+
+                    var candidate = data.candidates[0];
+                    var finishReason = candidate.finishReason;
+                    if (finishReason === 'SAFETY' || finishReason === 'RECITATION') {
+                        logTtsError(requestId, 'filtered', 'request_ms=' + requestElapsedMs + ' finishReason=' + finishReason);
+                        finish({ error: { type: 'api', message: '内容被安全过滤，无法生成音频', addition: 'finishReason: ' + finishReason } });
+                        return;
+                    }
+                    if (finishReason === 'MAX_TOKENS') {
+                        logTtsInfo(requestId, 'partial', 'request_ms=' + requestElapsedMs + ' finishReason=MAX_TOKENS (audio may be truncated)');
+                    }
+
+                    if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
+                        logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_content_part');
+                        finish({ error: { type: 'api', message: 'API 返回数据异常', addition: '候选结果中无内容' } });
+                        return;
+                    }
+
+                    var part = candidate.content.parts[0];
+                    if (!part.inlineData || !part.inlineData.data) {
+                        logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_audio_data');
+                        finish({ error: { type: 'api', message: 'API 返回数据异常', addition: '未找到音频数据' } });
+                        return;
+                    }
+
+                    var pcmBase64 = part.inlineData.data;
+                    var mimeType = part.inlineData.mimeType;
+                    var convertStartedAt = nowMs();
+                    var wavBase64 = pcmToWav(pcmBase64, mimeType);
+                    var convertElapsedMs = nowMs() - convertStartedAt;
+                    var totalElapsedMs = nowMs() - requestStartedAt;
+                    var result = createTtsResult(wavBase64, model, voice, 'miss');
+                    var cacheStored = setCachedAudioResult(cacheKey, result);
+
+                    logTtsInfo(
+                        requestId,
+                        'success',
+                        'status=' + statusCode +
+                        ' request_ms=' + requestElapsedMs +
+                        ' convert_ms=' + convertElapsedMs +
+                        ' total_ms=' + totalElapsedMs +
+                        ' cache_store=' + (cacheStored ? 'yes' : 'no') +
+                        ' mime=' + (mimeType || 'unknown') +
+                        ' pcm_base64_chars=' + pcmBase64.length +
+                        ' wav_base64_chars=' + wavBase64.length
+                    );
+
+                    finish({ result: result });
+                } catch (e) {
+                    logTtsError(
+                        requestId,
+                        'processing_error',
+                        'request_ms=' + requestElapsedMs +
+                        ' total_ms=' + (nowMs() - requestStartedAt) +
+                        ' message=' + sanitizeLogValue(e.message || e)
+                    );
+                    finish({ error: { type: 'api', message: '音频处理失败', addition: e.message || String(e) } });
                 }
             }
-        }
-    };
-
-    $http.request({
-        method: 'POST',
-        url: apiUrl,
-        header: {
-            'x-goog-api-key': apiKey,
-            'Content-Type': 'application/json'
-        },
-        body: requestBody,
-        timeout: TTS_REQUEST_TIMEOUT_INTERVAL,
-        handler: function (resp) {
-            var requestElapsedMs = nowMs() - requestStartedAt;
-
-            if (resp.error) {
-                logTtsError(
-                    requestId,
-                    'network_error',
-                    'request_ms=' + requestElapsedMs +
-                    ' message=' + sanitizeLogValue(resp.error.message || resp.error)
-                );
-                completion({ error: toServiceError(resp.error) });
-                return;
-            }
-
-            var statusCode = resp.response ? resp.response.statusCode : 0;
-            if (statusCode !== 200) {
-                var httpError = parseHttpError(resp);
-                logTtsError(
-                    requestId,
-                    'http_error',
-                    'request_ms=' + requestElapsedMs +
-                    ' status=' + statusCode +
-                    ' message=' + sanitizeLogValue(httpError.message + ' ' + (httpError.addition || ''))
-                );
-                completion({ error: httpError });
-                return;
-            }
-
-            try {
-                var data = resp.data;
-                if (!data || !data.candidates || !data.candidates[0]) {
-                    logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_candidate');
-                    completion({ error: { type: 'api', message: 'API 返回数据异常', addition: '未找到有效的候选结果' } });
-                    return;
-                }
-
-                var candidate = data.candidates[0];
-                if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
-                    logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_content_part');
-                    completion({ error: { type: 'api', message: 'API 返回数据异常', addition: '候选结果中无内容' } });
-                    return;
-                }
-
-                var part = candidate.content.parts[0];
-                if (!part.inlineData || !part.inlineData.data) {
-                    logTtsError(requestId, 'invalid_response', 'request_ms=' + requestElapsedMs + ' reason=missing_audio_data');
-                    completion({ error: { type: 'api', message: 'API 返回数据异常', addition: '未找到音频数据' } });
-                    return;
-                }
-
-                var pcmBase64 = part.inlineData.data;
-                var convertStartedAt = nowMs();
-                var wavBase64 = pcmToWav(pcmBase64);
-                var convertElapsedMs = nowMs() - convertStartedAt;
-                var totalElapsedMs = nowMs() - requestStartedAt;
-                var result = createTtsResult(wavBase64, model, voice, 'miss');
-                var cacheStored = setCachedAudioResult(cacheKey, result);
-
-                logTtsInfo(
-                    requestId,
-                    'success',
-                    'status=' + statusCode +
-                    ' request_ms=' + requestElapsedMs +
-                    ' convert_ms=' + convertElapsedMs +
-                    ' total_ms=' + totalElapsedMs +
-                    ' cache_store=' + (cacheStored ? 'yes' : 'no') +
-                    ' pcm_base64_chars=' + pcmBase64.length +
-                    ' wav_base64_chars=' + wavBase64.length
-                );
-
-                completion({
-                    result: result
-                });
-            } catch (e) {
-                logTtsError(
-                    requestId,
-                    'processing_error',
-                    'request_ms=' + requestElapsedMs +
-                    ' total_ms=' + (nowMs() - requestStartedAt) +
-                    ' message=' + sanitizeLogValue(e.message || e)
-                );
-                completion({ error: { type: 'api', message: '音频处理失败', addition: e.message || String(e) } });
-            }
-        }
-    });
+        });
+    } catch (e) {
+        logTtsError(
+            requestId,
+            'request_setup_error',
+            'message=' + sanitizeLogValue(e.message || e)
+        );
+        finish({ error: { type: 'network', message: '请求发送失败', addition: e.message || String(e) } });
+    }
 }
