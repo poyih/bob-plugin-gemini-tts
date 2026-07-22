@@ -2,6 +2,14 @@
   "identifier": "bob-plugin-gemini-tts",
   "versions": [
     {
+      "version": "1.2.2",
+      "desc": "全面加固 Gemini TTS：明确 transcript 提示、HTTP 500 单次重试、严格响应、音频与 URL 校验，降低长音频内存占用并补充回归测试",
+      "sha256": "32b83482d9b6d021c64a8f09934603f8ff1de99f6770025f824618e0088f2430",
+      "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.2.2/gemini-tts-1.2.2.bobplugin",
+      "minBobVersion": "1.20.0",
+      "timestamp": 1784703762000
+    },
+    {
       "version": "1.2.1",
       "desc": "修复 pt-BR 语种代码、回退请求超时、调整 finishReason 处理顺序，并加固 base64 解码、缓存键与校验回调契约",
       "sha256": "ce293fcb152feeb804ad41c84f4c559807767100312a807dc8fa1236a27d4016",
