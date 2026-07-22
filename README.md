@@ -10,7 +10,7 @@
 
 ## 安装
 
-1. 从当前最新发布的 [v1.2.2 Release](https://github.com/poyih/bob-plugin-gemini-tts/releases/tag/v1.2.2) 下载 `gemini-tts-1.2.2.bobplugin`
+1. 从当前最新发布的 [v1.2.3 Release](https://github.com/poyih/bob-plugin-gemini-tts/releases/tag/v1.2.3) 下载 `gemini-tts-1.2.3.bobplugin`
 2. 双击文件安装到 Bob
 
 ## 配置
