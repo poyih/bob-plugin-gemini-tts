@@ -478,7 +478,22 @@ function pcmToWav(pcmBase64, mimeType) {
         typeof $data.fromBase64 === 'function' &&
         typeof $data.fromByteArray === 'function') {
         var pcmData = $data.fromBase64(normalized.padded);
-        if (!pcmData || Number(pcmData.length) !== pcmLength) {
+        if (!pcmData) {
+            throw new Error('invalid base64 PCM payload');
+        }
+
+        // Bob 1.20 exposes $data as a native object whose byte length may not
+        // be bridged into JavaScript. Only compare the length when the runtime
+        // actually provides it; normalizeBase64 already validated the payload
+        // and calculated the expected decoded size before this native decode.
+        var nativePcmLength;
+        try {
+            nativePcmLength = pcmData.length;
+        } catch (e) {
+            nativePcmLength = undefined;
+        }
+        if (typeof nativePcmLength !== 'undefined' &&
+            Number(nativePcmLength) !== pcmLength) {
             throw new Error('invalid base64 PCM payload');
         }
 

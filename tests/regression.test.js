@@ -534,13 +534,10 @@ test('decoded PCM size is capped before WAV allocation', () => {
     );
 });
 
-function nativeDataApi(appendReturnsNewObject, onDecode) {
+function nativeDataApi(appendReturnsNewObject, onDecode, exposesLength) {
     function wrap(buffer) {
-        return {
+        const data = {
             _buffer: buffer,
-            get length() {
-                return this._buffer.length;
-            },
             appendData(other) {
                 const combined = Buffer.concat([this._buffer, other._buffer]);
                 if (appendReturnsNewObject) {
@@ -553,6 +550,14 @@ function nativeDataApi(appendReturnsNewObject, onDecode) {
                 return this._buffer.toString('base64');
             }
         };
+        if (exposesLength !== false) {
+            Object.defineProperty(data, 'length', {
+                get() {
+                    return this._buffer.length;
+                }
+            });
+        }
+        return data;
     }
 
     return {
@@ -580,6 +585,19 @@ for (const appendReturnsNewObject of [false, true]) {
         assert.deepEqual(Array.from(wav.subarray(44)), [0, 1, 2, 3]);
     });
 }
+
+test('Bob 1.20 $data WAV path works when native data has no length property', () => {
+    const harness = createHarness();
+    harness.context.$data = nativeDataApi(false, null, false);
+    const wav = Buffer.from(
+        harness.context.pcmToWav('AAECAw==', 'audio/L16;codec=pcm;rate=24000'),
+        'base64'
+    );
+
+    assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
+    assert.equal(wav.readUInt32LE(40), 4);
+    assert.deepEqual(Array.from(wav.subarray(44)), [0, 1, 2, 3]);
+});
 
 test('audio that crosses the total deadline during conversion is not cached', async () => {
     let firstDecode = true;
