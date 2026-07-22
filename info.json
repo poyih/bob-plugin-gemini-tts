@@ -1,6 +1,6 @@
 {
   "identifier": "bob-plugin-gemini-tts",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "category": "tts",
   "name": "Gemini TTS",
   "summary": "使用 Google Gemini TTS API 进行语音合成。",
@@ -25,7 +25,7 @@
       "type": "text",
       "title": "自定义 API 地址",
       "defaultValue": "https://generativelanguage.googleapis.com",
-      "desc": "可选，支持填入完整地址或仅填域名",
+      "desc": "仅限 HTTPS（本机地址可用 HTTP）；第三方代理会收到 API Key 和正文",
       "textConfig": {
         "type": "visible",
         "placeholderText": "https://generativelanguage.googleapis.com"

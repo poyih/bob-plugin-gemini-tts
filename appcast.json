@@ -7,7 +7,7 @@
       "sha256": "ce293fcb152feeb804ad41c84f4c559807767100312a807dc8fa1236a27d4016",
       "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.2.1/gemini-tts-1.2.1.bobplugin",
       "minBobVersion": "1.20.0",
-      "timestamp": 1784648805412
+      "timestamp": 1784650277000
     },
     {
       "version": "1.2.0",
@@ -15,7 +15,7 @@
       "sha256": "924597af9102e321a1b7ccd004692a468adbf8b39575b32e266db7ca03674970",
       "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.2.0/gemini-tts-1.2.0.bobplugin",
       "minBobVersion": "1.20.0",
-      "timestamp": 1784646542156
+      "timestamp": 1784646948000
     },
     {
       "version": "1.1.0",
@@ -23,7 +23,7 @@
       "sha256": "14060cc51c0e50340457435f283bee5225f3228fce682ab17eed006eb72ed18d",
       "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.1.0/gemini-tts-1.1.0.bobplugin",
       "minBobVersion": "1.20.0",
-      "timestamp": 1780469591000
+      "timestamp": 1780470109000
     },
     {
       "version": "1.0.2",
@@ -31,7 +31,7 @@
       "sha256": "6d2119102a2e89b258b369d1e2f6bbfa3cdf8842d82fb1aebf2a0df6173f1046",
       "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.0.2/gemini-tts-1.0.2.bobplugin",
       "minBobVersion": "1.8.0",
-      "timestamp": 1776599812000
+      "timestamp": 1776599916000
     },
     {
       "version": "1.0.1",
@@ -39,7 +39,7 @@
       "sha256": "d02dd2b899e0326bea20d39d0d3898247bef51fdac8354306a9d9eb799e1e65d",
       "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.0.1/gemini-tts-1.0.1.bobplugin",
       "minBobVersion": "1.8.0",
-      "timestamp": 1776592657000
+      "timestamp": 1776593110000
     },
     {
       "version": "1.0.0",
@@ -47,7 +47,7 @@
       "sha256": "f6a2cfcda587dc8700fde58e987e1cf6e1c3326e3fd1de6a4d4f3cf135d90605",
       "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.0.0/gemini-tts-1.0.0.bobplugin",
       "minBobVersion": "1.8.0",
-      "timestamp": 1744761600000
+      "timestamp": 1776327445000
     }
   ]
 }
