@@ -1,6 +1,6 @@
 {
   "identifier": "bob-plugin-gemini-tts",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "category": "tts",
   "name": "Gemini TTS",
   "summary": "使用 Google Gemini TTS API 进行语音合成。",
@@ -35,11 +35,14 @@
       "identifier": "model",
       "type": "menu",
       "title": "模型",
-      "defaultValue": "gemini-3.1-flash-tts-preview",
+      "defaultValue": "gemini-3.8-flash-tts",
+      "desc": "3.8 系列为正式版，逐字朗读正文，语音指令通过 speech_metadata 生效；3.1 / 2.5 为旧版预览模型",
       "menuValues": [
-        { "title": "Gemini 3.1 Flash TTS", "value": "gemini-3.1-flash-tts-preview" },
-        { "title": "Gemini 2.5 Pro TTS", "value": "gemini-2.5-pro-preview-tts" },
-        { "title": "Gemini 2.5 Flash TTS", "value": "gemini-2.5-flash-preview-tts" }
+        { "title": "Gemini 3.8 Flash TTS", "value": "gemini-3.8-flash-tts" },
+        { "title": "Gemini 3.8 Flash-Lite TTS", "value": "gemini-3.8-flash-lite-tts" },
+        { "title": "Gemini 3.1 Flash TTS（旧版）", "value": "gemini-3.1-flash-tts-preview" },
+        { "title": "Gemini 2.5 Pro TTS（旧版）", "value": "gemini-2.5-pro-preview-tts" },
+        { "title": "Gemini 2.5 Flash TTS（旧版）", "value": "gemini-2.5-flash-preview-tts" }
       ]
     },
     {
@@ -85,7 +88,7 @@
       "type": "text",
       "title": "语音指令",
       "defaultValue": "",
-      "desc": "可选，用于控制语音风格和语气",
+      "desc": "可选，用于控制语音风格和语气，不会被朗读出来",
       "textConfig": {
         "type": "visible",
         "height": 80,

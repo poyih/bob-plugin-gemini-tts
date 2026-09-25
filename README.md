@@ -2,15 +2,15 @@
 
 使用 Google Gemini TTS API 为 [Bob](https://bobtranslate.com/) 提供语音合成功能。
 
-支持 Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 模型，提供 30 种预置声音。
+支持 Gemini 3.8 Flash TTS、Gemini 3.8 Flash-Lite TTS（正式版），以及旧版 Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 模型，提供 30 种预置声音。
 
-支持直接在文本中使用 Gemini `audio tags` 控制语气、停顿和情绪。
+支持通过「语音指令」和正文中的 Gemini 音频标签控制语气、停顿和情绪。
 
 > 需要 Bob ≥ 1.20.0。
 
 ## 安装
 
-1. 从当前最新发布的 [v1.2.3 Release](https://github.com/poyih/bob-plugin-gemini-tts/releases/tag/v1.2.3) 下载 `gemini-tts-1.2.3.bobplugin`
+1. 从当前最新发布的 [v1.3.0 Release](https://github.com/poyih/bob-plugin-gemini-tts/releases/tag/v1.3.0) 下载 `gemini-tts-1.3.0.bobplugin`
 2. 双击文件安装到 Bob
 
 ## 配置
@@ -19,17 +19,30 @@
 | --- | --- | --- |
 | API Key | 是 | Gemini API Key，在 [Google AI Studio](https://aistudio.google.com/apikey) 获取 |
 | 自定义 API 地址 | 否 | 默认 `https://generativelanguage.googleapis.com`，地址规则及隐私风险见下文 |
-| 模型 | 否 | 默认 `gemini-3.1-flash-tts-preview`，可选 2.5 Pro / 2.5 Flash |
+| 模型 | 否 | 默认 `gemini-3.8-flash-tts`，可选 3.8 Flash-Lite 以及旧版 3.1 Flash / 2.5 Pro / 2.5 Flash |
 | 声音 | 否 | 默认 `Kore`，可选 30 种预置声音 |
-| 语音指令 | 否 | 用于控制语音风格和语气，如"用欢快的语气朗读" |
+| 语音指令 | 否 | 用于控制语音风格和语气，如"用欢快的语气朗读"，不会被朗读出来 |
 
 ### 模型选择
 
-| 模型 | 模型 ID | 特点 |
+| 模型 | 模型 ID | 状态 | 特点 |
+| --- | --- | --- | --- |
+| Gemini 3.8 Flash TTS | `gemini-3.8-flash-tts` | 正式版 | 表现力最强，支持 130 种语言（默认） |
+| Gemini 3.8 Flash-Lite TTS | `gemini-3.8-flash-lite-tts` | 正式版 | 更快、更省，支持 101 种语言，Google 推荐用它替代 3.1 Flash TTS |
+| Gemini 3.1 Flash TTS | `gemini-3.1-flash-tts-preview` | 旧版预览 | 仍可使用，Google 已建议迁移到 3.8 |
+| Gemini 2.5 Pro TTS | `gemini-2.5-pro-preview-tts` | 旧版预览 | 偏高质量 |
+| Gemini 2.5 Flash TTS | `gemini-2.5-flash-preview-tts` | 旧版预览 | 偏低延迟 |
+
+两代模型的接口约定不同，插件会按实际调用的模型自动切换（自定义地址中固定的模型路径优先于菜单选择）：
+
+| | Gemini 3.8 系列 | 3.1 / 2.5 旧版 |
 | --- | --- | --- |
-| Gemini 3.1 Flash TTS | `gemini-3.1-flash-tts-preview` | 最新，表现力与可控性更佳（默认） |
-| Gemini 2.5 Pro TTS | `gemini-2.5-pro-preview-tts` | 偏高质量 |
-| Gemini 2.5 Flash TTS | `gemini-2.5-flash-preview-tts` | 偏低延迟 |
+| 正文 | 原样发送、逐字朗读，不加任何前导提示 | 包裹在"仅生成语音"前导与 transcript 边界标记中 |
+| 语音指令 | 通过 `speech_metadata.style` 随正文发送，不会被朗读 | 作为提示词中的 PERFORMANCE INSTRUCTIONS 段发送 |
+| 声音 | `speechConfig.voiceConfig.voice` | `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` |
+| 返回音频 | 默认为带 RIFF 头的 `audio/wav`，插件校验后重新封装 | 裸 PCM `audio/L16;rate=24000`，插件补上 WAV 头 |
+
+> 3.8 模型会逐字朗读正文，写在正文里的指令（例如"用欢快的语气说："）也会被念出来，请把这类要求放到「语音指令」中。
 
 ### 预置声音
 
@@ -47,27 +60,37 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 
 ### 请求行为、长文本与重试
 
-- 插件会自动加入“仅生成语音并准确朗读”的 TTS 前导，并将“语音指令”和朗读正文置于明确、彼此分离的边界中；语音指令用于描述风格，不会作为正文直接拼接
-- 正文（包括 `audio tags`）会完整放入 transcript 边界；Gemini 的提示词执行具有概率性，无法保证每次都严格呈现所有风格效果
+- 3.8 系列：正文原样发送并逐字朗读；「语音指令」通过 `speech_metadata.style` 传给模型，用于描述整段的语气、角色、口音和语速
+- 3.1 / 2.5 旧版：插件会自动加入"仅生成语音并准确朗读"的 TTS 前导，并将"语音指令"和朗读正文置于明确、彼此分离的边界中；语音指令用于描述风格，不会作为正文直接拼接
+- Gemini 的提示词执行具有概率性，无法保证每次都严格呈现所有风格效果
 - 每次朗读是一次 Gemini 请求，插件不会自动切分或拼接长文章；正文最多 4000、语音指令最多 1000 个 UTF-16 字符单元，解码后的 PCM 音频最多 12 MiB，超限会直接报错。多数中英文字符占 1 个单元，部分 emoji 等字符占 2 个
+- 返回的音频可以是裸 PCM（`audio/L16`、`audio/pcm` 等）或带 RIFF 头的 WAV（`audio/wav`）；两者都只接受 16-bit 单声道 PCM，WAV 会在校验采样率与数据块后重新封装为标准 44 字节头
 - HTTP 500 会自动重试一次，初次请求和重试共享 115 秒总预算；其他状态不会自动重试，重试后仍失败也会返回错误
 - 截断、被过滤或格式异常的响应不会播放，也不会写入缓存
 
-## Audio Tags
+## 语音指令与音频标签
 
-Gemini TTS 支持在正文中直接插入 `audio tags`。插件会将文本原样发送给 Gemini，因此这类标签无需额外开关。
+插件会将正文原样发送给 Gemini，不会改写其中的标签，因此音频标签无需额外开关；但两代模型的写法不同：
 
-示例：
+| | Gemini 3.8 系列 | 3.1 / 2.5 旧版 |
+| --- | --- | --- |
+| 整段风格 | 填在「语音指令」中，例如"轻声、语速放慢" | 同左 |
+| 局部效果 | 正文中使用尖括号标签，如 `<short pause>`、`<laugh>`、`<sigh>`、`<breath>` | 正文中使用方括号标签，如 `[short pause]`、`[whispers]` |
+
+示例（3.8 系列）：
+
+```text
+你好。<short pause> 我们开始吧。<laugh>
+```
+
+示例（3.1 / 2.5 旧版）：
 
 ```text
 [whispers] 你好。[short pause] 我们开始吧。
 ```
 
-建议：
-
-- 将全局风格放在“语音指令”里，例如“用轻松自然的语气朗读”
-- 将局部效果放在正文里，例如 `[short pause]`、`[whispers]`
-- `audio tags` 属于提示词能力，不是严格 SSML，实际效果会随模型和声音略有波动
+- 音频标签属于提示词能力，不是严格 SSML，实际效果会随模型和声音略有波动
+- 3.8 模型会逐字朗读正文，请不要在正文中写入方括号指令或"用……语气说"之类的提示，改用「语音指令」
 
 ## 支持语言
 
