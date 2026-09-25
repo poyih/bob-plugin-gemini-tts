@@ -25,7 +25,7 @@ var PROMPT_SCHEMA_VERSION = 'tts-prompt-v3';
 var DEFAULT_MODEL = 'gemini-3.8-flash-tts';
 // Gemini 2.x and 3.0-3.7 TTS previews are prompt-driven: style directions ride
 // inside the text. Gemini 3.8 and later read the text verbatim and take style
-// through speech_metadata, so unknown or newer models use the verbatim format.
+// through speechMetadata, so unknown or newer models use the verbatim format.
 var LEGACY_PROMPT_MODEL_PATTERN = /^gemini-(?:[12]\.\d+|3\.[0-7])(?:\D|$)/i;
 var AUDIO_CACHE = {};
 var AUDIO_CACHE_ORDER = [];
@@ -1103,10 +1103,10 @@ function buildSpeechRequestBody(text, voice, instructions, model) {
 
     // Gemini 3.8 and later speak the text verbatim, so no wrapper prompt is
     // sent; anything else in the text would be read aloud. Style directions
-    // travel in speech_metadata next to the transcript instead.
+    // travel in speechMetadata next to the transcript instead.
     var part = { text: text };
     if (instructions) {
-        part.speech_metadata = { style: instructions };
+        part.speechMetadata = { style: instructions };
     }
     return {
         contents: [{ role: 'user', parts: [part] }],
@@ -1360,7 +1360,7 @@ function pluginValidate(completion) {
     var apiKey = readOption('apiKey');
     var voice = getVoice();
     // Send the configured instructions too, so validation exercises exactly the
-    // request shape playback will use: speech_metadata on Gemini 3.8, the
+    // request shape playback will use: speechMetadata on Gemini 3.8, the
     // instruction block inside the prompt on legacy models.
     var requestBody = buildSpeechRequestBody(
         'Hi',

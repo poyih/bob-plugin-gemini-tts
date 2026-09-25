@@ -38,7 +38,7 @@
 | | Gemini 3.8 系列 | 3.1 / 2.5 旧版 |
 | --- | --- | --- |
 | 正文 | 原样发送、逐字朗读，不加任何前导提示 | 包裹在"仅生成语音"前导与 transcript 边界标记中 |
-| 语音指令 | 通过 `speech_metadata.style` 随正文发送，不会被朗读 | 作为提示词中的 PERFORMANCE INSTRUCTIONS 段发送 |
+| 语音指令 | 通过 `speechMetadata.style` 随正文发送，不会被朗读 | 作为提示词中的 PERFORMANCE INSTRUCTIONS 段发送 |
 | 声音 | `speechConfig.voiceConfig.voice` | `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` |
 | 返回音频 | 默认为带 RIFF 头的 `audio/wav`，插件校验后重新封装 | 裸 PCM `audio/L16;rate=24000`，插件补上 WAV 头 |
 
@@ -60,7 +60,7 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 
 ### 请求行为、长文本与重试
 
-- 3.8 系列：正文原样发送并逐字朗读；「语音指令」通过 `speech_metadata.style` 传给模型，用于描述整段的语气、角色、口音和语速
+- 3.8 系列：正文原样发送并逐字朗读；「语音指令」通过 `speechMetadata.style` 传给模型，用于描述整段的语气、角色、口音和语速
 - 3.1 / 2.5 旧版：插件会自动加入"仅生成语音并准确朗读"的 TTS 前导，并将"语音指令"和朗读正文置于明确、彼此分离的边界中；语音指令用于描述风格，不会作为正文直接拼接
 - Gemini 的提示词执行具有概率性，无法保证每次都严格呈现所有风格效果
 - 每次朗读是一次 Gemini 请求，插件不会自动切分或拼接长文章；正文最多 4000、语音指令最多 1000 个 UTF-16 字符单元，解码后的 PCM 音频最多 12 MiB，超限会直接报错。多数中英文字符占 1 个单元，部分 emoji 等字符占 2 个
