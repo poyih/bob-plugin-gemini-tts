@@ -656,7 +656,7 @@ test('the default model is Gemini 3.8 Flash TTS', () => {
 });
 
 for (const model of VERBATIM_MODELS) {
-    test(`${model} requests send the transcript verbatim and carry style in speech_metadata`, async () => {
+    test(`${model} requests send the transcript verbatim and carry style in speechMetadata`, async () => {
         const text = 'Say cheerfully: [whispers] read every word of this line.';
         for (const instructions of ['', 'Whisper slowly, as if sharing a secret']) {
             const harness = createHarness({
@@ -674,9 +674,9 @@ for (const model of VERBATIM_MODELS) {
             const part = body.contents[0].parts[0];
             assert.equal(part.text, text, 'no wrapper prompt may be spoken by a verbatim model');
             if (instructions) {
-                assert.deepEqual(plain(part.speech_metadata), { style: instructions });
+                assert.deepEqual(plain(part.speechMetadata), { style: instructions });
             } else {
-                assert.equal('speech_metadata' in part, false);
+                assert.equal('speechMetadata' in part, false);
             }
             assert.deepEqual(plain(body.generationConfig.responseModalities), ['AUDIO']);
             assert.deepEqual(plain(body.generationConfig.speechConfig), { voiceConfig: { voice: 'Kore' } });
@@ -699,7 +699,7 @@ for (const model of LEGACY_MODELS) {
         const part = body.contents[0].parts[0];
         assert.match(part.text, /<<<BOB_TTS_TRANSCRIPT_BEGIN>>>/);
         assert.match(part.text, /Calm and even/);
-        assert.equal('speech_metadata' in part, false);
+        assert.equal('speechMetadata' in part, false);
         assert.deepEqual(
             plain(body.generationConfig.speechConfig),
             { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
@@ -768,12 +768,12 @@ test('validation sends the same request shape as playback, including configured 
     assert.equal((await callValidate(verbatim)).result, true);
     const part = verbatim.requests[0].body.contents[0].parts[0];
     assert.equal(part.text, 'Hi');
-    assert.deepEqual(plain(part.speech_metadata), { style: 'Warm and slow' });
+    assert.deepEqual(plain(part.speechMetadata), { style: 'Warm and slow' });
     assert.equal(verbatim.requests[0].body.generationConfig.speechConfig.voiceConfig.voice, 'Kore');
 
     const bare = createHarness({ responses: [successResponse()] });
     assert.equal((await callValidate(bare)).result, true);
-    assert.equal('speech_metadata' in bare.requests[0].body.contents[0].parts[0], false);
+    assert.equal('speechMetadata' in bare.requests[0].body.contents[0].parts[0], false);
 
     const legacy = createHarness({
         options: { model: LEGACY_MODEL, instructions: 'Warm and slow' },

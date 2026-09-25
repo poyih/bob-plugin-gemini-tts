@@ -36,7 +36,7 @@
       "type": "menu",
       "title": "模型",
       "defaultValue": "gemini-3.8-flash-tts",
-      "desc": "3.8 系列为正式版，逐字朗读正文，语音指令通过 speech_metadata 生效；3.1 / 2.5 为旧版预览模型",
+      "desc": "3.8 系列为正式版，逐字朗读正文，语音指令通过 speechMetadata 生效；3.1 / 2.5 为旧版预览模型",
       "menuValues": [
         { "title": "Gemini 3.8 Flash TTS", "value": "gemini-3.8-flash-tts" },
         { "title": "Gemini 3.8 Flash-Lite TTS", "value": "gemini-3.8-flash-lite-tts" },
