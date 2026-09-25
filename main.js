@@ -14,6 +14,8 @@ var MAX_INSTRUCTIONS_CHARS = 1000;
 var MAX_PCM_BYTES = 12 * 1024 * 1024;
 var WAV_HEADER_SCAN_BYTES = 4096;
 var MAX_WAV_CHUNKS = 64;
+// KSDATAFORMAT_SUBTYPE_PCM {00000001-0000-0010-8000-00AA00389B71} in RIFF byte order.
+var KSDATAFORMAT_SUBTYPE_PCM = [1, 0, 0, 0, 0, 0, 16, 0, 128, 0, 0, 170, 0, 56, 155, 113];
 var MAX_BASE64_INPUT_CHARS = 17 * 1024 * 1024;
 var CACHE_MAX_ENTRIES = 10;
 var CACHE_MAX_VALUE_CHARS = 3 * 1024 * 1024;
@@ -579,6 +581,16 @@ function readUint32LE(bytes, offset) {
         (bytes[offset + 3] << 24)) >>> 0;
 }
 
+function bytesEqual(bytes, offset, expected) {
+    var i;
+    for (i = 0; i < expected.length; i++) {
+        if (bytes[offset + i] !== expected[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Locates the 16-bit mono PCM payload inside a RIFF/WAVE container. Only the
 // decoded header prefix (scannedLength bytes) is inspected; totalLength is the
 // size of the whole file.
@@ -612,11 +624,23 @@ function parseWavHeader(bytes, scannedLength, totalLength) {
             }
             var audioFormat = readUint16LE(bytes, chunkStart);
             if (audioFormat === 65534) {
-                // WAVE_FORMAT_EXTENSIBLE: the sub-format GUID starts with the real format tag.
-                if (chunkSize < 40 || chunkStart + 26 > scannedLength) {
-                    throw new Error('WAV extensible fmt chunk is invalid');
+                // WAVE_FORMAT_EXTENSIBLE: cbSize must cover the 22-byte extension and
+                // the SubFormat GUID must be exactly KSDATAFORMAT_SUBTYPE_PCM; a GUID
+                // that merely starts with 0x0001 is not PCM.
+                if (chunkSize < 40 || chunkStart + 40 > scannedLength) {
+                    throw new Error('WAV extensible fmt chunk is truncated');
                 }
-                audioFormat = readUint16LE(bytes, chunkStart + 24);
+                if (readUint16LE(bytes, chunkStart + 16) < 22) {
+                    throw new Error('WAV extensible fmt chunk has an invalid extension size');
+                }
+                if (!bytesEqual(bytes, chunkStart + 24, KSDATAFORMAT_SUBTYPE_PCM)) {
+                    throw new Error('unsupported WAV extensible sub-format (expected PCM)');
+                }
+                var validBitsPerSample = readUint16LE(bytes, chunkStart + 18);
+                if (validBitsPerSample !== 0 && validBitsPerSample !== 16) {
+                    throw new Error('unsupported WAV valid bits per sample: ' + validBitsPerSample);
+                }
+                audioFormat = 1;
             }
             if (audioFormat !== 1) {
                 throw new Error('unsupported WAV audio format: ' + audioFormat + ' (expected PCM)');
@@ -1335,7 +1359,15 @@ function pluginValidate(completion) {
 
     var apiKey = readOption('apiKey');
     var voice = getVoice();
-    var requestBody = buildSpeechRequestBody('Hi', voice, '', endpoint.effectiveModel);
+    // Send the configured instructions too, so validation exercises exactly the
+    // request shape playback will use: speech_metadata on Gemini 3.8, the
+    // instruction block inside the prompt on legacy models.
+    var requestBody = buildSpeechRequestBody(
+        'Hi',
+        voice,
+        readOption('instructions'),
+        endpoint.effectiveModel
+    );
     var startedAt = nowMs();
 
     function sendValidationAttempt(attempt) {

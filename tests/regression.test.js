@@ -760,16 +760,30 @@ test('model family detection treats 2.x and 3.0-3.7 as legacy and everything new
     }
 });
 
-test('validation sends the same request family as playback', async () => {
-    const harness = createHarness({ responses: [successResponse()] });
+test('validation sends the same request shape as playback, including configured instructions', async () => {
+    const verbatim = createHarness({
+        options: { instructions: 'Warm and slow' },
+        responses: [successResponse()]
+    });
+    assert.equal((await callValidate(verbatim)).result, true);
+    const part = verbatim.requests[0].body.contents[0].parts[0];
+    assert.equal(part.text, 'Hi');
+    assert.deepEqual(plain(part.speech_metadata), { style: 'Warm and slow' });
+    assert.equal(verbatim.requests[0].body.generationConfig.speechConfig.voiceConfig.voice, 'Kore');
 
-    const output = await callValidate(harness);
-    assert.equal(output.result, true);
+    const bare = createHarness({ responses: [successResponse()] });
+    assert.equal((await callValidate(bare)).result, true);
+    assert.equal('speech_metadata' in bare.requests[0].body.contents[0].parts[0], false);
 
-    const body = harness.requests[0].body;
-    assert.equal(body.contents[0].parts[0].text, 'Hi');
-    assert.equal('speech_metadata' in body.contents[0].parts[0], false);
-    assert.equal(body.generationConfig.speechConfig.voiceConfig.voice, 'Kore');
+    const legacy = createHarness({
+        options: { model: LEGACY_MODEL, instructions: 'Warm and slow' },
+        responses: [successResponse()]
+    });
+    assert.equal((await callValidate(legacy)).result, true);
+    const legacyPrompt = promptFrom(legacy.requests[0]);
+    assert.match(legacyPrompt, /Warm and slow/);
+    assert.match(legacyPrompt, /<<<BOB_TTS_TRANSCRIPT_BEGIN>>>\nHi\n<<<BOB_TTS_TRANSCRIPT_END>>>/);
+    assert.equal(legacy.requests[0].body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Kore');
 });
 
 // ---- WAV responses (Gemini 3.8 default output) ----
@@ -793,10 +807,11 @@ function fmtChunk(options) {
         chunk.writeUInt16LE(bits, 22);
     }
     if (size >= 40 && options.subFormat != null) {
-        chunk.writeUInt16LE(22, 24);
-        chunk.writeUInt16LE(bits, 26);
+        chunk.writeUInt16LE(options.cbSize == null ? 22 : options.cbSize, 24);
+        chunk.writeUInt16LE(options.validBits == null ? bits : options.validBits, 26);
         chunk.writeUInt32LE(4, 28);
-        chunk.writeUInt16LE(options.subFormat, 32);
+        const guidTail = options.guidTail || [0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71];
+        Buffer.from([options.subFormat & 255, options.subFormat >> 8, 0, 0, 0, 0, 0x10, 0, ...guidTail]).copy(chunk, 32);
     }
     return chunk;
 }
@@ -896,8 +911,20 @@ test('WAV chunks before the data chunk are skipped and extensible PCM headers ar
 
     const extensible = wrapRiff([fmtChunk({ audioFormat: 0xFFFE, size: 40, subFormat: 1 }), dataChunk(pcm)]);
     assert.deepEqual(Array.from(convertWav(harness, extensible).subarray(44)), pcm);
-    const extensibleFloat = wrapRiff([fmtChunk({ audioFormat: 0xFFFE, size: 40, subFormat: 3 }), dataChunk(pcm)]);
-    assert.throws(() => convertWav(harness, extensibleFloat), /unsupported WAV audio format/);
+    const extensibleUnspecifiedBits = wrapRiff([fmtChunk({ audioFormat: 0xFFFE, size: 40, subFormat: 1, validBits: 0 }), dataChunk(pcm)]);
+    assert.deepEqual(Array.from(convertWav(harness, extensibleUnspecifiedBits).subarray(44)), pcm);
+
+    const rejected = [
+        ['float sub-format', { subFormat: 3 }, /sub-format/],
+        ['PCM-looking GUID with a foreign tail', { subFormat: 1, guidTail: [0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x72] }, /sub-format/],
+        ['extension size too small', { subFormat: 1, cbSize: 0 }, /extension size/],
+        ['valid bits mismatch', { subFormat: 1, validBits: 24 }, /valid bits/],
+        ['extensible tag without extension', { subFormat: 1, size: 16 }, /truncated/]
+    ];
+    for (const [label, overrides, pattern] of rejected) {
+        const wav = wrapRiff([fmtChunk(Object.assign({ audioFormat: 0xFFFE, size: 40 }, overrides)), dataChunk(pcm)]);
+        assert.throws(() => convertWav(harness, wav), pattern, label);
+    }
 });
 
 test('malformed or unsupported WAV payloads are rejected', () => {
