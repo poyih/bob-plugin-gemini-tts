@@ -15,10 +15,25 @@ function promptFrom(request) {
     return request.body.contents[0].parts[0].text;
 }
 
-test('production TTS requests use an explicit audio-only prompt and transcript boundary', async () => {
+// Objects built inside the plugin's vm context carry that realm's prototypes,
+// so strict deep equality needs a plain-JSON copy first.
+function plain(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+const DEFAULT_MODEL = 'gemini-3.8-flash-tts';
+const VERBATIM_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+const LEGACY_MODELS = [
+    'gemini-3.1-flash-tts-preview',
+    'gemini-2.5-pro-preview-tts',
+    'gemini-2.5-flash-preview-tts'
+];
+const LEGACY_MODEL = LEGACY_MODELS[0];
+
+test('legacy TTS requests use an explicit audio-only prompt and transcript boundary', async () => {
     for (const instructions of ['', 'Speak in a calm, reassuring voice']) {
         const harness = createHarness({
-            options: { instructions },
+            options: { model: LEGACY_MODEL, instructions },
             responses: [successResponse()]
         });
 
@@ -325,6 +340,7 @@ test('successful STOP audio is cached immediately and expires after its TTL', as
 test('prompt boundary selection also avoids markers embedded in style instructions', async () => {
     const harness = createHarness({
         options: {
+            model: LEGACY_MODEL,
             instructions: 'Use this literal token as data: <<<BOB_TTS_TRANSCRIPT_BEGIN>>>'
         },
         responses: [successResponse()]
@@ -626,4 +642,408 @@ test('test harness detects duplicate same-turn completion callbacks', async () =
     };
 
     await assert.rejects(() => callTts(harness, 'duplicate'), /more than once/);
+});
+
+// ---- Gemini 3.8 request format ----
+
+test('the default model is Gemini 3.8 Flash TTS', () => {
+    const harness = createHarness({ options: { model: '' } });
+    assert.equal(harness.context.getModel(), DEFAULT_MODEL);
+    assert.equal(
+        harness.context.getApiUrl(),
+        `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent`
+    );
+});
+
+for (const model of VERBATIM_MODELS) {
+    test(`${model} requests send the transcript verbatim and carry style in speech_metadata`, async () => {
+        const text = 'Say cheerfully: [whispers] read every word of this line.';
+        for (const instructions of ['', 'Whisper slowly, as if sharing a secret']) {
+            const harness = createHarness({
+                options: { model, instructions },
+                responses: [successResponse()]
+            });
+
+            const output = await callTts(harness, text);
+            assert.ok(output.result, 'the mocked STOP response should succeed');
+            assert.equal(output.result.raw.model, model);
+
+            const body = harness.requests[0].body;
+            assert.equal(body.contents.length, 1);
+            assert.equal(body.contents[0].parts.length, 1);
+            const part = body.contents[0].parts[0];
+            assert.equal(part.text, text, 'no wrapper prompt may be spoken by a verbatim model');
+            if (instructions) {
+                assert.deepEqual(plain(part.speech_metadata), { style: instructions });
+            } else {
+                assert.equal('speech_metadata' in part, false);
+            }
+            assert.deepEqual(plain(body.generationConfig.responseModalities), ['AUDIO']);
+            assert.deepEqual(plain(body.generationConfig.speechConfig), { voiceConfig: { voice: 'Kore' } });
+            assert.match(JSON.stringify(harness.logs), /request=verbatim/);
+        }
+    });
+}
+
+for (const model of LEGACY_MODELS) {
+    test(`${model} keeps the marker prompt and prebuiltVoiceConfig`, async () => {
+        const harness = createHarness({
+            options: { model, instructions: 'Calm and even' },
+            responses: [successResponse()]
+        });
+
+        const output = await callTts(harness, 'Legacy transcript.');
+        assert.ok(output.result);
+
+        const body = harness.requests[0].body;
+        const part = body.contents[0].parts[0];
+        assert.match(part.text, /<<<BOB_TTS_TRANSCRIPT_BEGIN>>>/);
+        assert.match(part.text, /Calm and even/);
+        assert.equal('speech_metadata' in part, false);
+        assert.deepEqual(
+            plain(body.generationConfig.speechConfig),
+            { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
+        );
+        assert.match(JSON.stringify(harness.logs), /request=legacy-prompt/);
+    });
+}
+
+test('the request format follows the endpoint model rather than the menu model', async () => {
+    const legacyEndpoint = createHarness({
+        options: {
+            model: DEFAULT_MODEL,
+            apiUrl: `https://proxy.example/v1beta/models/${LEGACY_MODEL}`
+        },
+        responses: [successResponse()]
+    });
+    const verbatimEndpoint = createHarness({
+        options: {
+            model: LEGACY_MODEL,
+            apiUrl: 'https://proxy.example/v1beta/models/gemini-3.8-flash-lite-tts'
+        },
+        responses: [successResponse()]
+    });
+
+    assert.ok((await callTts(legacyEndpoint, 'Route by endpoint.')).result);
+    assert.ok((await callTts(verbatimEndpoint, 'Route by endpoint.')).result);
+
+    const legacyBody = legacyEndpoint.requests[0].body;
+    assert.match(promptFrom(legacyEndpoint.requests[0]), /transcript/i);
+    assert.equal(legacyBody.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Kore');
+
+    const verbatimBody = verbatimEndpoint.requests[0].body;
+    assert.equal(promptFrom(verbatimEndpoint.requests[0]), 'Route by endpoint.');
+    assert.equal(verbatimBody.generationConfig.speechConfig.voiceConfig.voice, 'Kore');
+});
+
+test('model family detection treats 2.x and 3.0-3.7 as legacy and everything newer as verbatim', () => {
+    const harness = createHarness();
+    for (const model of [
+        ...LEGACY_MODELS,
+        'gemini-2.0-flash',
+        'gemini-3.0-flash-tts',
+        'gemini-3.7-pro-tts',
+        ' GEMINI-3.1-FLASH-TTS-PREVIEW '
+    ]) {
+        assert.equal(harness.context.usesLegacySpeechPrompt(model), true, model);
+    }
+    for (const model of [
+        ...VERBATIM_MODELS,
+        'gemini-3.8-flash-tts-preview-10-2026',
+        'gemini-3.10-flash-tts',
+        'gemini-4-flash-tts',
+        'custom-proxy-tts',
+        '',
+        undefined
+    ]) {
+        assert.equal(harness.context.usesLegacySpeechPrompt(model), false, String(model));
+    }
+});
+
+test('validation sends the same request shape as playback, including configured instructions', async () => {
+    const verbatim = createHarness({
+        options: { instructions: 'Warm and slow' },
+        responses: [successResponse()]
+    });
+    assert.equal((await callValidate(verbatim)).result, true);
+    const part = verbatim.requests[0].body.contents[0].parts[0];
+    assert.equal(part.text, 'Hi');
+    assert.deepEqual(plain(part.speech_metadata), { style: 'Warm and slow' });
+    assert.equal(verbatim.requests[0].body.generationConfig.speechConfig.voiceConfig.voice, 'Kore');
+
+    const bare = createHarness({ responses: [successResponse()] });
+    assert.equal((await callValidate(bare)).result, true);
+    assert.equal('speech_metadata' in bare.requests[0].body.contents[0].parts[0], false);
+
+    const legacy = createHarness({
+        options: { model: LEGACY_MODEL, instructions: 'Warm and slow' },
+        responses: [successResponse()]
+    });
+    assert.equal((await callValidate(legacy)).result, true);
+    const legacyPrompt = promptFrom(legacy.requests[0]);
+    assert.match(legacyPrompt, /Warm and slow/);
+    assert.match(legacyPrompt, /<<<BOB_TTS_TRANSCRIPT_BEGIN>>>\nHi\n<<<BOB_TTS_TRANSCRIPT_END>>>/);
+    assert.equal(legacy.requests[0].body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Kore');
+});
+
+// ---- WAV responses (Gemini 3.8 default output) ----
+
+function fmtChunk(options) {
+    options = options || {};
+    const channels = options.channels == null ? 1 : options.channels;
+    const bits = options.bits == null ? 16 : options.bits;
+    const sampleRate = options.sampleRate == null ? 24000 : options.sampleRate;
+    const blockAlign = options.blockAlign == null ? channels * bits / 8 : options.blockAlign;
+    const size = options.size == null ? 16 : options.size;
+    const chunk = Buffer.alloc(8 + size + (size % 2));
+    chunk.write('fmt ', 0, 'ascii');
+    chunk.writeUInt32LE(size, 4);
+    if (size >= 16) {
+        chunk.writeUInt16LE(options.audioFormat == null ? 1 : options.audioFormat, 8);
+        chunk.writeUInt16LE(channels, 10);
+        chunk.writeUInt32LE(sampleRate, 12);
+        chunk.writeUInt32LE(sampleRate * blockAlign, 16);
+        chunk.writeUInt16LE(blockAlign, 20);
+        chunk.writeUInt16LE(bits, 22);
+    }
+    if (size >= 40 && options.subFormat != null) {
+        chunk.writeUInt16LE(options.cbSize == null ? 22 : options.cbSize, 24);
+        chunk.writeUInt16LE(options.validBits == null ? bits : options.validBits, 26);
+        chunk.writeUInt32LE(4, 28);
+        const guidTail = options.guidTail || [0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71];
+        Buffer.from([options.subFormat & 255, options.subFormat >> 8, 0, 0, 0, 0, 0x10, 0, ...guidTail]).copy(chunk, 32);
+    }
+    return chunk;
+}
+
+function dataChunk(pcm, declaredSize) {
+    const payload = Buffer.from(pcm);
+    const chunk = Buffer.alloc(8 + payload.length);
+    chunk.write('data', 0, 'ascii');
+    chunk.writeUInt32LE(declaredSize == null ? payload.length : declaredSize, 4);
+    payload.copy(chunk, 8);
+    return chunk;
+}
+
+function junkChunk(size) {
+    const chunk = Buffer.alloc(8 + size + (size % 2), 0x4a);
+    chunk.write('JUNK', 0, 'ascii');
+    chunk.writeUInt32LE(size, 4);
+    return chunk;
+}
+
+function wrapRiff(chunks, riffId, waveId) {
+    const body = Buffer.concat([Buffer.from(waveId || 'WAVE', 'ascii'), ...chunks]);
+    const header = Buffer.alloc(8);
+    header.write(riffId || 'RIFF', 0, 'ascii');
+    header.writeUInt32LE(body.length, 4);
+    return Buffer.concat([header, body]);
+}
+
+function sequentialPcm(length) {
+    return Array.from({ length }, (_, index) => (index * 37 + 11) & 255);
+}
+
+function convertWav(harness, wav, mimeType) {
+    return Buffer.from(harness.context.audioToWav(wav.toString('base64'), mimeType || 'audio/wav'), 'base64');
+}
+
+test('WAV responses are validated and re-wrapped with the plugin WAV header', () => {
+    const harness = createHarness();
+    const pcm = [0, 1, 2, 3, 4, 5];
+    const out = convertWav(harness, wrapRiff([fmtChunk({ sampleRate: 22050 }), dataChunk(pcm)]));
+
+    assert.equal(out.length, 44 + pcm.length);
+    assert.equal(out.toString('ascii', 0, 4), 'RIFF');
+    assert.equal(out.readUInt32LE(4), 36 + pcm.length);
+    assert.equal(out.toString('ascii', 8, 16), 'WAVEfmt ');
+    assert.equal(out.readUInt16LE(20), 1);
+    assert.equal(out.readUInt16LE(22), 1);
+    assert.equal(out.readUInt32LE(24), 22050);
+    assert.equal(out.readUInt16LE(34), 16);
+    assert.equal(out.toString('ascii', 36, 40), 'data');
+    assert.equal(out.readUInt32LE(40), pcm.length);
+    assert.deepEqual(Array.from(out.subarray(44)), pcm);
+});
+
+test('WAV media type variants and parameters are accepted while PCM types keep the raw path', () => {
+    const harness = createHarness();
+    const wav = wrapRiff([fmtChunk(), dataChunk([1, 2, 3, 4])]);
+    for (const mimeType of [
+        'audio/wav',
+        'audio/x-wav',
+        'audio/wave',
+        'audio/vnd.wave',
+        'AUDIO/WAV; codec=pcm',
+        'audio/wav;rate=24000'
+    ]) {
+        assert.deepEqual(Array.from(convertWav(harness, wav, mimeType).subarray(44)), [1, 2, 3, 4], mimeType);
+    }
+
+    const raw = Buffer.from(harness.context.audioToWav('AAECAw==', 'audio/L16;rate=24000'), 'base64');
+    assert.equal(raw.length, 48);
+    assert.deepEqual(Array.from(raw.subarray(44)), [0, 1, 2, 3]);
+    assert.throws(() => harness.context.audioToWav('AAECAw==', 'audio/flac'), /unsupported audio mimeType/);
+    assert.throws(() => harness.context.audioToWav('AAECAw==', 'audio/wav'), /WAV/);
+});
+
+test('WAV placeholder data sizes use the whole payload and smaller sizes drop trailing chunks', () => {
+    const harness = createHarness();
+    const pcm = [5, 6, 7, 8, 9, 10];
+    for (const declaredSize of [0, 0xFFFFFFFF, 1_000_000]) {
+        const out = convertWav(harness, wrapRiff([fmtChunk(), dataChunk(pcm, declaredSize)]));
+        assert.deepEqual(Array.from(out.subarray(44)), pcm, String(declaredSize));
+        assert.equal(out.readUInt32LE(40), pcm.length);
+    }
+
+    const trailing = wrapRiff([fmtChunk(), dataChunk(pcm, 4), junkChunk(3)]);
+    const out = convertWav(harness, trailing);
+    assert.deepEqual(Array.from(out.subarray(44)), [5, 6, 7, 8]);
+});
+
+test('WAV chunks before the data chunk are skipped and extensible PCM headers are accepted', () => {
+    const harness = createHarness();
+    const pcm = [1, 2, 3, 4];
+    for (const size of [0, 1, 2, 3, 4, 5, 100]) {
+        const out = convertWav(harness, wrapRiff([fmtChunk(), junkChunk(size), dataChunk(pcm)]));
+        assert.deepEqual(Array.from(out.subarray(44)), pcm, `junk size ${size}`);
+    }
+
+    const extensible = wrapRiff([fmtChunk({ audioFormat: 0xFFFE, size: 40, subFormat: 1 }), dataChunk(pcm)]);
+    assert.deepEqual(Array.from(convertWav(harness, extensible).subarray(44)), pcm);
+    const extensibleUnspecifiedBits = wrapRiff([fmtChunk({ audioFormat: 0xFFFE, size: 40, subFormat: 1, validBits: 0 }), dataChunk(pcm)]);
+    assert.deepEqual(Array.from(convertWav(harness, extensibleUnspecifiedBits).subarray(44)), pcm);
+
+    const rejected = [
+        ['float sub-format', { subFormat: 3 }, /sub-format/],
+        ['PCM-looking GUID with a foreign tail', { subFormat: 1, guidTail: [0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x72] }, /sub-format/],
+        ['extension size too small', { subFormat: 1, cbSize: 0 }, /extension size/],
+        ['valid bits mismatch', { subFormat: 1, validBits: 24 }, /valid bits/],
+        ['extensible tag without extension', { subFormat: 1, size: 16 }, /truncated/]
+    ];
+    for (const [label, overrides, pattern] of rejected) {
+        const wav = wrapRiff([fmtChunk(Object.assign({ audioFormat: 0xFFFE, size: 40 }, overrides)), dataChunk(pcm)]);
+        assert.throws(() => convertWav(harness, wav), pattern, label);
+    }
+});
+
+test('malformed or unsupported WAV payloads are rejected', () => {
+    const harness = createHarness();
+    const pcm = [1, 2, 3, 4];
+    const cases = [
+        ['too short', Buffer.from([0, 1])],
+        ['RIFX signature', wrapRiff([fmtChunk(), dataChunk(pcm)], 'RIFX')],
+        ['not WAVE', wrapRiff([fmtChunk(), dataChunk(pcm)], 'RIFF', 'AVI ')],
+        ['stereo', wrapRiff([fmtChunk({ channels: 2 }), dataChunk(pcm)])],
+        ['8-bit', wrapRiff([fmtChunk({ bits: 8 }), dataChunk(pcm)])],
+        ['float', wrapRiff([fmtChunk({ audioFormat: 3 }), dataChunk(pcm)])],
+        ['low sample rate', wrapRiff([fmtChunk({ sampleRate: 4000 }), dataChunk(pcm)])],
+        ['bad block align', wrapRiff([fmtChunk({ blockAlign: 4 }), dataChunk(pcm)])],
+        ['short fmt', wrapRiff([fmtChunk({ size: 8 }), dataChunk(pcm)])],
+        ['data before fmt', wrapRiff([dataChunk(pcm), fmtChunk()])],
+        ['missing data', wrapRiff([fmtChunk(), junkChunk(4)])],
+        ['missing fmt', wrapRiff([dataChunk(pcm)])],
+        ['empty data', wrapRiff([fmtChunk(), dataChunk([])])],
+        ['odd frame', wrapRiff([fmtChunk(), dataChunk([1, 2, 3])])],
+        ['odd declared frame', wrapRiff([fmtChunk(), dataChunk([1, 2, 3, 4], 3)])],
+        ['data beyond scan limit', wrapRiff([fmtChunk(), junkChunk(5000), dataChunk(pcm)])]
+    ];
+
+    for (const [label, wav] of cases) {
+        assert.throws(() => convertWav(harness, wav), /WAV|PCM/, label);
+    }
+});
+
+test('decoded WAV PCM size is capped before allocation', () => {
+    const harness = createHarness();
+    harness.evaluate('MAX_PCM_BYTES = 2');
+    assert.throws(
+        () => convertWav(harness, wrapRiff([fmtChunk(), dataChunk([1, 2, 3, 4])])),
+        /12 MiB|limit|exceed/i
+    );
+});
+
+for (const appendReturnsNewObject of [false, true]) {
+    for (const exposesLength of [true, false]) {
+        test(`Bob $data WAV path re-wraps PCM at every base64 alignment (appendData ${appendReturnsNewObject ? 'returns new' : 'mutates'}, length ${exposesLength ? 'exposed' : 'hidden'})`, () => {
+            const harness = createHarness();
+            harness.context.$data = nativeDataApi(appendReturnsNewObject, null, exposesLength);
+
+            for (const junkSize of [null, 0, 2, 4, 7]) {
+                for (const pcmLength of [2, 4, 6, 8, 10, 12, 14]) {
+                    for (const trailer of [0, 1, 5]) {
+                        const pcm = sequentialPcm(pcmLength);
+                        const chunks = [fmtChunk({ sampleRate: 16000 })];
+                        if (junkSize != null) {
+                            chunks.push(junkChunk(junkSize));
+                        }
+                        chunks.push(dataChunk(pcm));
+                        if (trailer) {
+                            chunks.push(Buffer.alloc(trailer, 0xee));
+                        }
+                        const label = `junk=${junkSize} pcm=${pcmLength} trailer=${trailer}`;
+                        const out = convertWav(harness, wrapRiff(chunks));
+
+                        assert.equal(out.length, 44 + pcmLength, label);
+                        assert.equal(out.toString('ascii', 0, 4), 'RIFF', label);
+                        assert.equal(out.readUInt32LE(24), 16000, label);
+                        assert.equal(out.readUInt32LE(40), pcmLength, label);
+                        assert.deepEqual(Array.from(out.subarray(44)), pcm, label);
+                    }
+                }
+            }
+        });
+    }
+}
+
+test('Bob $data WAV path rejects a native decode whose length disagrees with the base64 text', () => {
+    const harness = createHarness();
+    const api = nativeDataApi(false);
+    const realFromBase64 = api.fromBase64;
+    api.fromBase64 = (value) => {
+        const data = realFromBase64(value);
+        data._buffer = Buffer.concat([data._buffer, Buffer.from([0])]);
+        return data;
+    };
+    harness.context.$data = api;
+
+    assert.throws(
+        () => convertWav(harness, wrapRiff([fmtChunk(), dataChunk(sequentialPcm(12))])),
+        /invalid base64 PCM payload/
+    );
+});
+
+test('a Gemini 3.8 audio/wav response plays, is logged as wav, and is cached', async () => {
+    const wav = wrapRiff([fmtChunk(), dataChunk([9, 8, 7, 6])]).toString('base64');
+    const harness = createHarness({
+        responses: [successResponse({ mimeType: 'audio/wav', pcmBase64: wav })]
+    });
+
+    const first = await callTts(harness, 'WAV end to end.');
+    assert.ok(first.result, JSON.stringify(first));
+    const out = Buffer.from(first.result.value, 'base64');
+    assert.equal(out.toString('ascii', 0, 4), 'RIFF');
+    assert.deepEqual(Array.from(out.subarray(44)), [9, 8, 7, 6]);
+    assert.match(JSON.stringify(harness.logs), /format=wav/);
+
+    const second = await callTts(harness, 'WAV end to end.');
+    assert.equal(second.result.raw.cache, 'hit');
+    assert.equal(harness.requests.length, 1);
+});
+
+test('a malformed audio/wav response is an error and is never cached', async () => {
+    const broken = wrapRiff([fmtChunk({ channels: 2 }), dataChunk([1, 2, 3, 4])]).toString('base64');
+    const harness = createHarness({
+        responses: [
+            successResponse({ mimeType: 'audio/wav', pcmBase64: broken }),
+            successResponse({ mimeType: 'audio/wav', pcmBase64: broken })
+        ]
+    });
+
+    const first = await callTts(harness, 'Broken WAV.');
+    const second = await callTts(harness, 'Broken WAV.');
+    assert.ok(first.error);
+    assert.match(first.error.addition || '', /channel/);
+    assert.ok(second.error);
+    assert.equal(harness.requests.length, 2);
 });

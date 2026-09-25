@@ -11,7 +11,7 @@ function defaultOptions(overrides) {
     return Object.assign({
         apiKey: 'test-api-key',
         apiUrl: 'https://generativelanguage.googleapis.com',
-        model: 'gemini-3.1-flash-tts-preview',
+        model: 'gemini-3.8-flash-tts',
         voice: 'Kore',
         instructions: ''
     }, overrides || {});

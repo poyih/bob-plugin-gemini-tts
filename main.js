@@ -1,5 +1,6 @@
 // Bob TTS Plugin - Google Gemini TTS
-// 使用 Google Gemini TTS API 进行语音合成（支持 Gemini 3.1 Flash / 2.5 Pro / 2.5 Flash TTS）
+// 使用 Google Gemini TTS API 进行语音合成
+// 支持 Gemini 3.8 Flash / 3.8 Flash-Lite TTS，以及旧版 3.1 Flash / 2.5 Pro / 2.5 Flash TTS
 
 var BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 var LOG_PREFIX = '[bob-plugin-gemini-tts]';
@@ -11,12 +12,21 @@ var VALIDATION_ATTEMPT_TIMEOUT_SECONDS = 30;
 var MAX_TTS_TEXT_CHARS = 4000;
 var MAX_INSTRUCTIONS_CHARS = 1000;
 var MAX_PCM_BYTES = 12 * 1024 * 1024;
+var WAV_HEADER_SCAN_BYTES = 4096;
+var MAX_WAV_CHUNKS = 64;
+// KSDATAFORMAT_SUBTYPE_PCM {00000001-0000-0010-8000-00AA00389B71} in RIFF byte order.
+var KSDATAFORMAT_SUBTYPE_PCM = [1, 0, 0, 0, 0, 0, 16, 0, 128, 0, 0, 170, 0, 56, 155, 113];
 var MAX_BASE64_INPUT_CHARS = 17 * 1024 * 1024;
 var CACHE_MAX_ENTRIES = 10;
 var CACHE_MAX_VALUE_CHARS = 3 * 1024 * 1024;
 var CACHE_MAX_TOTAL_VALUE_CHARS = 12 * 1024 * 1024;
 var CACHE_TTL_MS = 10 * 60 * 1000;
-var PROMPT_SCHEMA_VERSION = 'tts-prompt-v2';
+var PROMPT_SCHEMA_VERSION = 'tts-prompt-v3';
+var DEFAULT_MODEL = 'gemini-3.8-flash-tts';
+// Gemini 2.x and 3.0-3.7 TTS previews are prompt-driven: style directions ride
+// inside the text. Gemini 3.8 and later read the text verbatim and take style
+// through speech_metadata, so unknown or newer models use the verbatim format.
+var LEGACY_PROMPT_MODEL_PATTERN = /^gemini-(?:[12]\.\d+|3\.[0-7])(?:\D|$)/i;
 var AUDIO_CACHE = {};
 var AUDIO_CACHE_ORDER = [];
 var AUDIO_CACHE_TOTAL_CHARS = 0;
@@ -326,7 +336,7 @@ function writeUint32LE(bytes, offset, value) {
     bytes[offset + 3] = (value >>> 24) & 255;
 }
 
-function parsePcmFormat(mimeType) {
+function parseMediaType(mimeType) {
     if (typeof mimeType !== 'string') {
         throw new Error('audio mimeType is missing');
     }
@@ -336,9 +346,18 @@ function parsePcmFormat(mimeType) {
     if (!mimeType.trim()) {
         throw new Error('audio mimeType is missing');
     }
+    return mimeType.toLowerCase().split(';')[0].trim();
+}
 
+function isWavMediaType(mediaType) {
+    return mediaType === 'audio/wav' || mediaType === 'audio/x-wav' ||
+        mediaType === 'audio/wave' || mediaType === 'audio/vnd.wave';
+}
+
+function parsePcmFormat(mimeType) {
+    var mediaType = parseMediaType(mimeType);
     var segments = mimeType.toLowerCase().split(';');
-    var mediaType = segments.shift().trim();
+    segments.shift();
     var allowedTypes = {
         'audio/l16': true,
         'audio/pcm': true,
@@ -347,7 +366,7 @@ function parsePcmFormat(mimeType) {
     };
     if (!allowedTypes[mediaType]) {
         throw new Error('unsupported audio mimeType: ' + mediaType +
-            ' (expected raw 16-bit PCM such as audio/L16;rate=24000)');
+            ' (expected raw 16-bit PCM such as audio/L16;rate=24000, or audio/wav)');
     }
 
     var sampleRate = 24000;
@@ -456,9 +475,57 @@ function buildWavHeader(pcmLength, format) {
     return header;
 }
 
-function pcmToWav(pcmBase64, mimeType) {
-    var normalized = normalizeBase64(pcmBase64);
-    var pcmLength = normalized.byteLength;
+// Bob's native data object avoids materializing the complete PCM and WAV as
+// JavaScript byte arrays. This is the normal plugin-runtime path.
+function hasNativeData() {
+    return typeof $data !== 'undefined' && !!$data &&
+        typeof $data.fromBase64 === 'function' &&
+        typeof $data.fromByteArray === 'function';
+}
+
+// Bob 1.20 exposes $data as a native object whose byte length may not be
+// bridged into JavaScript. Only compare the length when the runtime actually
+// provides it; normalizeBase64 already validated the payload and calculated
+// the expected decoded size before the native decode.
+function nativeLengthMismatch(data, expectedLength) {
+    var nativeLength;
+    try {
+        nativeLength = data.length;
+    } catch (e) {
+        nativeLength = undefined;
+    }
+    return typeof nativeLength !== 'undefined' && Number(nativeLength) !== expectedLength;
+}
+
+function allocateNativeWav(leadingBytes) {
+    var wavData = $data.fromByteArray(leadingBytes);
+    if (!wavData || typeof wavData.appendData !== 'function') {
+        throw new Error('failed to allocate WAV data');
+    }
+    return wavData;
+}
+
+// appendData either mutates in place or returns the combined object.
+function appendNativeData(wavData, chunk) {
+    var appendedData = wavData.appendData(chunk);
+    if (appendedData && typeof appendedData.toBase64 === 'function') {
+        return appendedData;
+    }
+    return wavData;
+}
+
+function encodeNativeWav(wavData) {
+    if (typeof wavData.toBase64 !== 'function') {
+        throw new Error('failed to encode WAV data');
+    }
+    var wavBase64 = wavData.toBase64();
+    if (typeof wavBase64 !== 'string' || !wavBase64) {
+        throw new Error('failed to encode WAV data');
+    }
+    return wavBase64;
+}
+
+function checkPcmLength(pcmLength) {
     if (!pcmLength) {
         throw new Error('PCM audio is empty');
     }
@@ -468,51 +535,22 @@ function pcmToWav(pcmBase64, mimeType) {
     if (pcmLength % 2 !== 0) {
         throw new Error('PCM audio has an incomplete 16-bit frame');
     }
+}
+
+function pcmToWav(pcmBase64, mimeType) {
+    var normalized = normalizeBase64(pcmBase64);
+    var pcmLength = normalized.byteLength;
+    checkPcmLength(pcmLength);
 
     var format = parsePcmFormat(mimeType);
     var header = buildWavHeader(pcmLength, format);
 
-    // Bob's native data object avoids materializing the complete PCM and WAV as
-    // JavaScript byte arrays. This is the normal plugin-runtime path.
-    if (typeof $data !== 'undefined' && $data &&
-        typeof $data.fromBase64 === 'function' &&
-        typeof $data.fromByteArray === 'function') {
+    if (hasNativeData()) {
         var pcmData = $data.fromBase64(normalized.padded);
-        if (!pcmData) {
+        if (!pcmData || nativeLengthMismatch(pcmData, pcmLength)) {
             throw new Error('invalid base64 PCM payload');
         }
-
-        // Bob 1.20 exposes $data as a native object whose byte length may not
-        // be bridged into JavaScript. Only compare the length when the runtime
-        // actually provides it; normalizeBase64 already validated the payload
-        // and calculated the expected decoded size before this native decode.
-        var nativePcmLength;
-        try {
-            nativePcmLength = pcmData.length;
-        } catch (e) {
-            nativePcmLength = undefined;
-        }
-        if (typeof nativePcmLength !== 'undefined' &&
-            Number(nativePcmLength) !== pcmLength) {
-            throw new Error('invalid base64 PCM payload');
-        }
-
-        var wavData = $data.fromByteArray(header);
-        if (!wavData || typeof wavData.appendData !== 'function') {
-            throw new Error('failed to allocate WAV data');
-        }
-        var appendedData = wavData.appendData(pcmData);
-        if (appendedData && typeof appendedData.toBase64 === 'function') {
-            wavData = appendedData;
-        }
-        if (typeof wavData.toBase64 !== 'function') {
-            throw new Error('failed to encode WAV data');
-        }
-        var wavBase64 = wavData.toBase64();
-        if (typeof wavBase64 !== 'string' || !wavBase64) {
-            throw new Error('failed to encode WAV data');
-        }
-        return wavBase64;
+        return encodeNativeWav(appendNativeData(allocateNativeWav(header), pcmData));
     }
 
     // Portable fallback used by the regression tests and older runtimes.
@@ -523,6 +561,215 @@ function pcmToWav(pcmBase64, mimeType) {
     }
     decodeBase64Into(normalized.unpadded, wavBytes, 44);
     return base64Encode(wavBytes);
+}
+
+function readAscii(bytes, offset, length) {
+    var value = '';
+    var i;
+    for (i = 0; i < length; i++) {
+        value += String.fromCharCode(bytes[offset + i]);
+    }
+    return value;
+}
+
+function readUint16LE(bytes, offset) {
+    return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readUint32LE(bytes, offset) {
+    return (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) |
+        (bytes[offset + 3] << 24)) >>> 0;
+}
+
+function bytesEqual(bytes, offset, expected) {
+    var i;
+    for (i = 0; i < expected.length; i++) {
+        if (bytes[offset + i] !== expected[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Locates the 16-bit mono PCM payload inside a RIFF/WAVE container. Only the
+// decoded header prefix (scannedLength bytes) is inspected; totalLength is the
+// size of the whole file.
+function parseWavHeader(bytes, scannedLength, totalLength) {
+    if (totalLength < 46) {
+        throw new Error('WAV audio is too short to contain a header and a PCM frame');
+    }
+    if (readAscii(bytes, 0, 4) !== 'RIFF' || readAscii(bytes, 8, 4) !== 'WAVE') {
+        throw new Error('WAV audio does not start with a RIFF/WAVE signature');
+    }
+
+    var offset = 12;
+    var format = null;
+    var chunkCount = 0;
+    while (offset + 8 <= scannedLength) {
+        if (chunkCount >= MAX_WAV_CHUNKS) {
+            throw new Error('WAV header contains too many chunks');
+        }
+        chunkCount += 1;
+
+        var chunkId = readAscii(bytes, offset, 4);
+        var chunkSize = readUint32LE(bytes, offset + 4);
+        var chunkStart = offset + 8;
+
+        if (chunkId === 'fmt ') {
+            if (chunkSize < 16) {
+                throw new Error('WAV fmt chunk is too short');
+            }
+            if (chunkStart + 16 > scannedLength) {
+                throw new Error('WAV fmt chunk exceeds the header scan limit');
+            }
+            var audioFormat = readUint16LE(bytes, chunkStart);
+            if (audioFormat === 65534) {
+                // WAVE_FORMAT_EXTENSIBLE: cbSize must cover the 22-byte extension and
+                // the SubFormat GUID must be exactly KSDATAFORMAT_SUBTYPE_PCM; a GUID
+                // that merely starts with 0x0001 is not PCM.
+                if (chunkSize < 40 || chunkStart + 40 > scannedLength) {
+                    throw new Error('WAV extensible fmt chunk is truncated');
+                }
+                if (readUint16LE(bytes, chunkStart + 16) < 22) {
+                    throw new Error('WAV extensible fmt chunk has an invalid extension size');
+                }
+                if (!bytesEqual(bytes, chunkStart + 24, KSDATAFORMAT_SUBTYPE_PCM)) {
+                    throw new Error('unsupported WAV extensible sub-format (expected PCM)');
+                }
+                var validBitsPerSample = readUint16LE(bytes, chunkStart + 18);
+                if (validBitsPerSample !== 0 && validBitsPerSample !== 16) {
+                    throw new Error('unsupported WAV valid bits per sample: ' + validBitsPerSample);
+                }
+                audioFormat = 1;
+            }
+            if (audioFormat !== 1) {
+                throw new Error('unsupported WAV audio format: ' + audioFormat + ' (expected PCM)');
+            }
+            var numChannels = readUint16LE(bytes, chunkStart + 2);
+            var sampleRate = readUint32LE(bytes, chunkStart + 4);
+            var blockAlign = readUint16LE(bytes, chunkStart + 12);
+            var bitsPerSample = readUint16LE(bytes, chunkStart + 14);
+            if (numChannels !== 1) {
+                throw new Error('unsupported WAV channel count: ' + numChannels);
+            }
+            if (bitsPerSample !== 16) {
+                throw new Error('unsupported WAV bit depth: ' + bitsPerSample);
+            }
+            if (sampleRate < 8000 || sampleRate > 192000) {
+                throw new Error('invalid WAV sample rate: ' + sampleRate);
+            }
+            if (blockAlign !== 0 && blockAlign !== 2) {
+                throw new Error('unsupported WAV block alignment: ' + blockAlign);
+            }
+            format = { sampleRate: sampleRate, numChannels: 1, bitsPerSample: 16 };
+        } else if (chunkId === 'data') {
+            if (!format) {
+                throw new Error('WAV data chunk appears before the fmt chunk');
+            }
+            var available = totalLength - chunkStart;
+            var pcmLength = chunkSize;
+            // 0 and 0xFFFFFFFF are streaming placeholders and an oversized
+            // declaration is clamped to the payload; a smaller declaration keeps
+            // trailing chunks out of the audio.
+            if (pcmLength === 0 || pcmLength === 4294967295 || pcmLength > available) {
+                pcmLength = available;
+            }
+            return { format: format, dataOffset: chunkStart, pcmLength: pcmLength };
+        }
+
+        offset = chunkStart + chunkSize + (chunkSize % 2);
+    }
+
+    throw new Error('WAV data chunk was not found within the first ' +
+        WAV_HEADER_SCAN_BYTES + ' bytes');
+}
+
+// Gemini 3.8 TTS answers unary requests with a complete WAV file. The container
+// is validated and the PCM is re-wrapped in the plugin's own 44-byte header so
+// Bob always receives the same canonical layout as for raw PCM responses.
+function wavToWav(wavBase64) {
+    var normalized = normalizeBase64(wavBase64);
+    var unpadded = normalized.unpadded;
+    var totalLength = normalized.byteLength;
+
+    // Decode only the header prefix: every 4 base64 characters hold 3 bytes.
+    var scanChars = Math.ceil(WAV_HEADER_SCAN_BYTES / 3) * 4;
+    if (scanChars > unpadded.length) {
+        scanChars = unpadded.length;
+    }
+    var scannedLength = Math.floor(scanChars * 6 / 8);
+    var headerBytes = new Uint8Array(scannedLength);
+    decodeBase64Into(unpadded.substring(0, scanChars), headerBytes, 0);
+
+    var parsed = parseWavHeader(headerBytes, scannedLength, totalLength);
+    var pcmLength = parsed.pcmLength;
+    var dataOffset = parsed.dataOffset;
+    checkPcmLength(pcmLength);
+
+    var header = buildWavHeader(pcmLength, parsed.format);
+    var pcmEnd = dataOffset + pcmLength;
+    var i;
+
+    if (hasNativeData()) {
+        // Slice the PCM out of the base64 text rather than out of decoded bytes:
+        // the section aligned to 3-byte groups decodes natively as-is, and only
+        // the unaligned edges (at most 2 bytes each) are copied from the decoded
+        // header prefix and from the final base64 group.
+        var midStart = Math.min(Math.ceil(dataOffset / 3) * 3, pcmEnd);
+        var midEnd = Math.max(Math.floor(pcmEnd / 3) * 3, midStart);
+        if (midStart > scannedLength) {
+            throw new Error('WAV data chunk exceeds the header scan limit');
+        }
+
+        var leadingBytes = header.slice(0);
+        for (i = dataOffset; i < midStart; i++) {
+            leadingBytes.push(headerBytes[i]);
+        }
+        var wavData = allocateNativeWav(leadingBytes);
+
+        if (midEnd > midStart) {
+            var midData = $data.fromBase64(unpadded.substring(midStart / 3 * 4, midEnd / 3 * 4));
+            if (!midData || nativeLengthMismatch(midData, midEnd - midStart)) {
+                throw new Error('invalid base64 PCM payload');
+            }
+            wavData = appendNativeData(wavData, midData);
+        }
+
+        if (pcmEnd > midEnd) {
+            var tailGroupStart = midEnd / 3 * 4;
+            var tailGroupBytes = new Uint8Array(3);
+            decodeBase64Into(
+                unpadded.substring(tailGroupStart, tailGroupStart + 4),
+                tailGroupBytes,
+                0
+            );
+            var trailingBytes = [];
+            for (i = 0; i < pcmEnd - midEnd; i++) {
+                trailingBytes.push(tailGroupBytes[i]);
+            }
+            wavData = appendNativeData(wavData, $data.fromByteArray(trailingBytes));
+        }
+        return encodeNativeWav(wavData);
+    }
+
+    // Portable fallback used by the regression tests and older runtimes.
+    var fileBytes = new Uint8Array(totalLength);
+    decodeBase64Into(unpadded, fileBytes, 0);
+    var wavBytes = new Uint8Array(44 + pcmLength);
+    for (i = 0; i < header.length; i++) {
+        wavBytes[i] = header[i];
+    }
+    for (i = 0; i < pcmLength; i++) {
+        wavBytes[44 + i] = fileBytes[dataOffset + i];
+    }
+    return base64Encode(wavBytes);
+}
+
+function audioToWav(audioBase64, mimeType) {
+    if (isWavMediaType(parseMediaType(mimeType))) {
+        return wavToWav(audioBase64);
+    }
+    return pcmToWav(audioBase64, mimeType);
 }
 
 // ---- Bob Plugin Interface ----
@@ -548,7 +795,7 @@ function readOption(name) {
 }
 
 function getModel() {
-    return readOption('model') || 'gemini-3.1-flash-tts-preview';
+    return readOption('model') || DEFAULT_MODEL;
 }
 
 function getVoice() {
@@ -835,15 +1082,38 @@ function buildSpeechPrompt(text, instructions) {
     return sections.join('\n\n');
 }
 
-function buildSpeechRequestBody(text, voice, instructions) {
+function usesLegacySpeechPrompt(model) {
+    return LEGACY_PROMPT_MODEL_PATTERN.test(String(model == null ? '' : model).trim());
+}
+
+function buildSpeechRequestBody(text, voice, instructions, model) {
+    if (usesLegacySpeechPrompt(model)) {
+        return {
+            contents: [{ parts: [{ text: buildSpeechPrompt(text, instructions || '') }] }],
+            generationConfig: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                    voiceConfig: {
+                        prebuiltVoiceConfig: { voiceName: voice }
+                    }
+                }
+            }
+        };
+    }
+
+    // Gemini 3.8 and later speak the text verbatim, so no wrapper prompt is
+    // sent; anything else in the text would be read aloud. Style directions
+    // travel in speech_metadata next to the transcript instead.
+    var part = { text: text };
+    if (instructions) {
+        part.speech_metadata = { style: instructions };
+    }
     return {
-        contents: [{ parts: [{ text: buildSpeechPrompt(text, instructions || '') }] }],
+        contents: [{ role: 'user', parts: [part] }],
         generationConfig: {
             responseModalities: ['AUDIO'],
             speechConfig: {
-                voiceConfig: {
-                    prebuiltVoiceConfig: { voiceName: voice }
-                }
+                voiceConfig: { voice: voice }
             }
         }
     };
@@ -1029,8 +1299,10 @@ function inspectAudioResponse(responseData, secret) {
     }
 
     var wavBase64;
+    var audioFormat;
     try {
-        wavBase64 = pcmToWav(inlineData.data, inlineData.mimeType);
+        audioFormat = isWavMediaType(parseMediaType(inlineData.mimeType)) ? 'wav' : 'pcm';
+        wavBase64 = audioToWav(inlineData.data, inlineData.mimeType);
     } catch (e) {
         throw responseError(
             '音频处理失败',
@@ -1041,7 +1313,8 @@ function inspectAudioResponse(responseData, secret) {
     return {
         wavBase64: wavBase64,
         mimeType: inlineData.mimeType,
-        pcmBase64Chars: inlineData.data.length
+        audioFormat: audioFormat,
+        audioBase64Chars: inlineData.data.length
     };
 }
 
@@ -1086,7 +1359,15 @@ function pluginValidate(completion) {
 
     var apiKey = readOption('apiKey');
     var voice = getVoice();
-    var requestBody = buildSpeechRequestBody('Hi', voice, '');
+    // Send the configured instructions too, so validation exercises exactly the
+    // request shape playback will use: speech_metadata on Gemini 3.8, the
+    // instruction block inside the prompt on legacy models.
+    var requestBody = buildSpeechRequestBody(
+        'Hi',
+        voice,
+        readOption('instructions'),
+        endpoint.effectiveModel
+    );
     var startedAt = nowMs();
 
     function sendValidationAttempt(attempt) {
@@ -1200,7 +1481,7 @@ function tts(query, completion) {
     var instructions = readOption('instructions');
     var requestId = nextRequestId();
     var requestStartedAt = nowMs();
-    var requestBody = buildSpeechRequestBody(text, voice, instructions);
+    var requestBody = buildSpeechRequestBody(text, voice, instructions, model);
 
     logTtsInfo(
         requestId,
@@ -1208,6 +1489,7 @@ function tts(query, completion) {
         'chars=' + text.length +
         ' prompt_chars=' + requestBody.contents[0].parts[0].text.length +
         ' instructions=' + (instructions ? 'on' : 'off') +
+        ' request=' + (usesLegacySpeechPrompt(model) ? 'legacy-prompt' : 'verbatim') +
         ' model=' + sanitizeLogValue(model, apiKey) +
         ' voice=' + sanitizeLogValue(voice, apiKey)
     );
@@ -1337,7 +1619,8 @@ function tts(query, completion) {
                             ' total_ms=' + totalElapsedMs +
                             ' cache_store=' + (cacheStored ? 'yes' : 'no') +
                             ' mime=' + sanitizeLogValue(audio.mimeType, apiKey) +
-                            ' pcm_base64_chars=' + audio.pcmBase64Chars +
+                            ' format=' + audio.audioFormat +
+                            ' audio_base64_chars=' + audio.audioBase64Chars +
                             ' wav_base64_chars=' + audio.wavBase64.length
                         );
                         finish({ result: result });
