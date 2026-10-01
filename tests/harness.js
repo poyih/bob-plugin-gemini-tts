@@ -12,6 +12,7 @@ function defaultOptions(overrides) {
         apiKey: 'test-api-key',
         apiUrl: 'https://generativelanguage.googleapis.com',
         model: 'gemini-3.8-flash-tts',
+        requestFormat: 'auto',
         voice: 'Kore',
         instructions: ''
     }, overrides || {});
@@ -76,6 +77,23 @@ function createHarness(config) {
     };
 
     vm.createContext(context);
+    const moduleCache = new Map();
+    function loadModule(name, parentDir) {
+        const filename = path.resolve(parentDir, name);
+        if (!filename.startsWith(path.dirname(MAIN_PATH) + path.sep) || !filename.endsWith('.js')) {
+            throw new Error('Only plugin JavaScript modules can be required: ' + name);
+        }
+        if (moduleCache.has(filename)) return moduleCache.get(filename).exports;
+        const module = { exports: {} };
+        moduleCache.set(filename, module);
+        const factory = new vm.Script(
+            '(function(module, exports, require) {\n' + fs.readFileSync(filename, 'utf8') + '\n})',
+            { filename }
+        ).runInContext(context);
+        factory(module, module.exports, (child) => loadModule(child, path.dirname(filename)));
+        return module.exports;
+    }
+    context.require = (name) => loadModule(name, path.dirname(MAIN_PATH));
     new vm.Script(MAIN_SOURCE, { filename: MAIN_PATH }).runInContext(context);
 
     return {

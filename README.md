@@ -10,7 +10,7 @@
 
 ## 安装
 
-1. 从当前最新发布的 [v1.3.0 Release](https://github.com/poyih/bob-plugin-gemini-tts/releases/tag/v1.3.0) 下载 `gemini-tts-1.3.0.bobplugin`
+1. 从 [最新 Release](https://github.com/poyih/bob-plugin-gemini-tts/releases/latest) 下载对应版本的 `gemini-tts-<version>.bobplugin`
 2. 双击文件安装到 Bob
 
 ## 配置
@@ -20,6 +20,7 @@
 | API Key | 是 | Gemini API Key，在 [Google AI Studio](https://aistudio.google.com/apikey) 获取 |
 | 自定义 API 地址 | 否 | 默认 `https://generativelanguage.googleapis.com`，地址规则及隐私风险见下文 |
 | 模型 | 否 | 默认 `gemini-3.8-flash-tts`，可选 3.8 Flash-Lite 以及旧版 3.1 Flash / 2.5 Pro / 2.5 Flash |
+| 请求格式 | 否 | 默认按已知模型自动选择；未知模型或代理别名需明确选择「3.8 格式」或「旧版格式」 |
 | 声音 | 否 | 默认 `Kore`，可选 30 种预置声音 |
 | 语音指令 | 否 | 用于控制语音风格和语气，如"用欢快的语气朗读"，不会被朗读出来 |
 
@@ -33,7 +34,7 @@
 | Gemini 2.5 Pro TTS | `gemini-2.5-pro-preview-tts` | 旧版预览 | 偏高质量 |
 | Gemini 2.5 Flash TTS | `gemini-2.5-flash-preview-tts` | 旧版预览 | 偏低延迟 |
 
-两代模型的接口约定不同，插件会按实际调用的模型自动切换（自定义地址中固定的模型路径优先于菜单选择）：
+两代模型的接口约定不同，插件通过明确的模型能力表选择请求格式（自定义地址中固定的模型路径优先于菜单选择）。未知模型和代理别名不会按版本号推测协议，请在「请求格式」中指定其兼容格式；已知模型通常保留「自动」即可。
 
 | | Gemini 3.8 系列 | 3.1 / 2.5 旧版 |
 | --- | --- | --- |
@@ -67,6 +68,8 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 - 返回的音频可以是裸 PCM（`audio/L16`、`audio/pcm` 等）或带 RIFF 头的 WAV（`audio/wav`）；两者都只接受 16-bit 单声道 PCM，WAV 会在校验采样率与数据块后重新封装为标准 44 字节头
 - HTTP 500 会自动重试一次，初次请求和重试共享 115 秒总预算；其他状态不会自动重试，重试后仍失败也会返回错误
 - 截断、被过滤或格式异常的响应不会播放，也不会写入缓存
+- WAV 的有限 RIFF 长度必须与完整文件一致，有限 data 长度不得超过实际内容；仅 `0` 和 `0xFFFFFFFF` 作为流式长度占位值兼容，不会把其他超大声明当作占位值
+- 同一正文、语言、地址、模型、声音、指令、凭据和请求格式的在途朗读会共享请求与重试；成功后缓存 10 分钟。失败会清理共享状态，后续调用可以重新请求
 
 ## 语音指令与音频标签
 
@@ -100,10 +103,11 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 
 ## 开发
 
-运行零依赖回归测试（需要 Node.js 18+）：
+开发检查需要 Node.js 22+ 和 Python 3.8+，均只使用标准库，无需安装第三方依赖。运行插件与发布工具测试：
 
 ```bash
-node --test tests/regression.test.js
+node --test tests/*.test.js
+python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 构建插件：
@@ -112,7 +116,28 @@ node --test tests/regression.test.js
 ./scripts/package.sh
 ```
 
-脚本会从 `info.json` 读取版本号，并在项目根目录生成 `gemini-tts-<version>.bobplugin`。
+脚本会从 `info.json` 读取版本号，在 `dist/` 中生成 `gemini-tts-<version>.bobplugin` 和同名 `.sha256` 校验文件。包内包含 `main.js` 以及 `lib/models.js`、`lib/request.js`；打包前会检查模块依赖是否全部纳入清单。ZIP 时间戳和权限固定，相同源码可重复构建出相同字节。
+
+生成并核对候选更新清单：
+
+```bash
+python3 scripts/release.py check
+python3 scripts/release.py prepare
+python3 scripts/release.py verify --appcast dist/appcast.json
+```
+
+`info.json` 是版本号和最低 Bob 版本的来源，`release-notes.txt` 是待发布版本的更新说明。`prepare` 自动计算构建包 SHA-256、下载地址和候选时间戳，将新版本与历史记录合并到 `dist/appcast.json`；候选清单用于检查，不应在上传 Release 前提交为正式更新源。
+
+上传同一个构建包到对应版本的 GitHub Release 后，执行：
+
+```bash
+python3 scripts/release.py finalize
+python3 scripts/release.py verify --appcast appcast.json --github
+```
+
+`finalize` 会检查 Release 标签、状态、文件名、长度和 SHA-256，并下载已上传的文件再次比对。全部一致后才更新项目根目录的 `appcast.json`，时间戳使用 GitHub 实际发布时间；任何验证失败都会保留原更新源。工具不创建或上传 Release，现有已发布版本不能替换为不同的包。
+
+CI 在 push 和 pull request 时使用 macOS、Node.js 22/24 执行语法检查、所有测试、元数据检查、构建及候选清单校验，并提供经过验证的构建产物。
 
 `info.json` 中的 `bob-plugin-gemini-tts` 是已经发布并用于升级匹配的 legacy identifier。尽管其中的连字符不符合 Bob 当前推荐格式，在 Bob 提供官方迁移机制前仍必须保留；请勿直接重命名，否则现有用户将无法沿原升级链更新。
 

@@ -1,0 +1,48 @@
+name: Plugin checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: Check JavaScript syntax
+        run: |
+          node --check main.js
+          node --check lib/models.js
+          node --check lib/request.js
+      - name: Run plugin regression tests
+        run: node --test tests/*.test.js
+      - name: Run release tool tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Check metadata and build plugin
+        run: |
+          python3 scripts/release.py check
+          ./scripts/package.sh
+          python3 scripts/release.py prepare
+          python3 scripts/release.py verify --appcast dist/appcast.json
+      - name: Upload verified package and candidate update feed
+        if: matrix.node == 24
+        uses: actions/upload-artifact@v7
+        with:
+          name: gemini-tts-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

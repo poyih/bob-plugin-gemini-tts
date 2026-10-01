@@ -736,19 +736,23 @@ test('the request format follows the endpoint model rather than the menu model',
     assert.equal(verbatimBody.generationConfig.speechConfig.voiceConfig.voice, 'Kore');
 });
 
-test('model family detection treats 2.x and 3.0-3.7 as legacy and everything newer as verbatim', () => {
+test('model request formats come from explicit capabilities and reject unknown models', () => {
     const harness = createHarness();
     for (const model of [
         ...LEGACY_MODELS,
-        'gemini-2.0-flash',
-        'gemini-3.0-flash-tts',
-        'gemini-3.7-pro-tts',
         ' GEMINI-3.1-FLASH-TTS-PREVIEW '
     ]) {
         assert.equal(harness.context.usesLegacySpeechPrompt(model), true, model);
     }
     for (const model of [
-        ...VERBATIM_MODELS,
+        ...VERBATIM_MODELS
+    ]) {
+        assert.equal(harness.context.usesLegacySpeechPrompt(model), false, model);
+    }
+    for (const model of [
+        'gemini-2.0-flash',
+        'gemini-3.0-flash-tts',
+        'gemini-3.7-pro-tts',
         'gemini-3.8-flash-tts-preview-10-2026',
         'gemini-3.10-flash-tts',
         'gemini-4-flash-tts',
@@ -756,7 +760,7 @@ test('model family detection treats 2.x and 3.0-3.7 as legacy and everything new
         '',
         undefined
     ]) {
-        assert.equal(harness.context.usesLegacySpeechPrompt(model), false, String(model));
+        assert.throws(() => harness.context.usesLegacySpeechPrompt(model), /请求格式/, String(model));
     }
 });
 
@@ -890,7 +894,7 @@ test('WAV media type variants and parameters are accepted while PCM types keep t
 test('WAV placeholder data sizes use the whole payload and smaller sizes drop trailing chunks', () => {
     const harness = createHarness();
     const pcm = [5, 6, 7, 8, 9, 10];
-    for (const declaredSize of [0, 0xFFFFFFFF, 1_000_000]) {
+    for (const declaredSize of [0, 0xFFFFFFFF]) {
         const out = convertWav(harness, wrapRiff([fmtChunk(), dataChunk(pcm, declaredSize)]));
         assert.deepEqual(Array.from(out.subarray(44)), pcm, String(declaredSize));
         assert.equal(out.readUInt32LE(40), pcm.length);

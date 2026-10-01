@@ -1,5 +1,7 @@
 # Build artifacts
 *.bobplugin
+dist/
+__pycache__/
 
 # macOS
 .DS_Store

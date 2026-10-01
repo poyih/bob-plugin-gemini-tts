@@ -21,15 +21,14 @@ var CACHE_MAX_ENTRIES = 10;
 var CACHE_MAX_VALUE_CHARS = 3 * 1024 * 1024;
 var CACHE_MAX_TOTAL_VALUE_CHARS = 12 * 1024 * 1024;
 var CACHE_TTL_MS = 10 * 60 * 1000;
-var PROMPT_SCHEMA_VERSION = 'tts-prompt-v3';
+var PROMPT_SCHEMA_VERSION = 'tts-prompt-v4';
 var DEFAULT_MODEL = 'gemini-3.8-flash-tts';
-// Gemini 2.x and 3.0-3.7 TTS previews are prompt-driven: style directions ride
-// inside the text. Gemini 3.8 and later read the text verbatim and take style
-// through speechMetadata, so unknown or newer models use the verbatim format.
-var LEGACY_PROMPT_MODEL_PATTERN = /^gemini-(?:[12]\.\d+|3\.[0-7])(?:\D|$)/i;
+var SPEECH_MODELS = require('./lib/models.js');
+var SPEECH_REQUESTS = require('./lib/request.js');
 var AUDIO_CACHE = {};
 var AUDIO_CACHE_ORDER = [];
 var AUDIO_CACHE_TOTAL_CHARS = 0;
+var INFLIGHT_TTS = {};
 
 function nowMs() {
     return new Date().getTime();
@@ -40,9 +39,9 @@ function nextRequestId() {
     return REQUEST_COUNTER;
 }
 
-function safeStringify(value) {
+function safeStringify(value, secret) {
     if (value == null || typeof value !== 'object') {
-        return String(value);
+        return redactSecret(String(value), secret);
     }
 
     var parts = [];
@@ -66,14 +65,19 @@ function safeStringify(value) {
         if (item != null && typeof item === 'object') {
             item = '[object]';
         }
-        item = String(item);
+        // Redact each scalar before truncation can turn a key into an unmatchable prefix.
+        item = redactSecret(String(item), secret);
         if (item.length > 200) {
             item = item.substring(0, 197) + '...';
         }
-        parts.push(String(key) + '=' + item);
+        var safeKey = redactSecret(String(key), secret);
+        if (safeKey.length > 200) {
+            safeKey = safeKey.substring(0, 197) + '...';
+        }
+        parts.push(safeKey + '=' + item);
         count += 1;
     }
-    return parts.length ? '{' + parts.join(', ') + '}' : String(value);
+    return parts.length ? '{' + parts.join(', ') + '}' : redactSecret(String(value), secret);
 }
 
 function redactSecret(value, secret) {
@@ -122,8 +126,8 @@ function fingerprintSecret(secret) {
     return hashA.toString(16) + '-' + hashB.toString(16) + '-' + value.length;
 }
 
-function makeCacheKey(text, lang, apiUrl, model, voice, instructions, apiKey) {
-    // JSON.stringify keeps fields separator-safe. The API key itself is never retained.
+function makeCacheKey(text, lang, apiUrl, model, voice, instructions, apiKey, requestFormat) {
+    // JSON.stringify keeps fields separator-safe. The API key field is fingerprinted.
     return JSON.stringify([
         PROMPT_SCHEMA_VERSION,
         apiUrl,
@@ -132,7 +136,8 @@ function makeCacheKey(text, lang, apiUrl, model, voice, instructions, apiKey) {
         instructions,
         lang || '',
         text || '',
-        fingerprintSecret(apiKey)
+        fingerprintSecret(apiKey),
+        requestFormat
     ]);
 }
 
@@ -602,6 +607,13 @@ function parseWavHeader(bytes, scannedLength, totalLength) {
         throw new Error('WAV audio does not start with a RIFF/WAVE signature');
     }
 
+    var riffSize = readUint32LE(bytes, 4);
+    // Only these sentinel sizes are accepted for containers written while streaming.
+    var riffEnd = riffSize === 0 || riffSize === 4294967295 ? totalLength : 8 + riffSize;
+    if (riffEnd !== totalLength) {
+        throw new Error('WAV RIFF length does not match the complete payload (truncated or trailing data)');
+    }
+
     var offset = 12;
     var format = null;
     var chunkCount = 0;
@@ -615,7 +627,14 @@ function parseWavHeader(bytes, scannedLength, totalLength) {
         var chunkSize = readUint32LE(bytes, offset + 4);
         var chunkStart = offset + 8;
 
+        if (chunkId !== 'data' && chunkStart + chunkSize + (chunkSize % 2) > riffEnd) {
+            throw new Error('WAV chunk extends beyond the RIFF boundary');
+        }
+
         if (chunkId === 'fmt ') {
+            if (format) {
+                throw new Error('WAV contains duplicate fmt chunks');
+            }
             if (chunkSize < 16) {
                 throw new Error('WAV fmt chunk is too short');
             }
@@ -630,7 +649,8 @@ function parseWavHeader(bytes, scannedLength, totalLength) {
                 if (chunkSize < 40 || chunkStart + 40 > scannedLength) {
                     throw new Error('WAV extensible fmt chunk is truncated');
                 }
-                if (readUint16LE(bytes, chunkStart + 16) < 22) {
+                var extensionSize = readUint16LE(bytes, chunkStart + 16);
+                if (extensionSize < 22 || 18 + extensionSize > chunkSize) {
                     throw new Error('WAV extensible fmt chunk has an invalid extension size');
                 }
                 if (!bytesEqual(bytes, chunkStart + 24, KSDATAFORMAT_SUBTYPE_PCM)) {
@@ -666,13 +686,12 @@ function parseWavHeader(bytes, scannedLength, totalLength) {
             if (!format) {
                 throw new Error('WAV data chunk appears before the fmt chunk');
             }
-            var available = totalLength - chunkStart;
+            var available = riffEnd - chunkStart;
             var pcmLength = chunkSize;
-            // 0 and 0xFFFFFFFF are streaming placeholders and an oversized
-            // declaration is clamped to the payload; a smaller declaration keeps
-            // trailing chunks out of the audio.
-            if (pcmLength === 0 || pcmLength === 4294967295 || pcmLength > available) {
+            if (pcmLength === 0 || pcmLength === 4294967295) {
                 pcmLength = available;
+            } else if (pcmLength > available) {
+                throw new Error('WAV data chunk is truncated');
             }
             return { format: format, dataOffset: chunkStart, pcmLength: pcmLength };
         }
@@ -904,7 +923,7 @@ function isValidHostname(value) {
 
 function resolveApiEndpoint() {
     var configuredModel = getModel();
-    if (!/^[A-Za-z0-9._-]+$/.test(configuredModel)) {
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(configuredModel)) {
         throw endpointError('模型名称包含不允许的字符');
     }
 
@@ -997,7 +1016,7 @@ function resolveApiEndpoint() {
             } catch (e) {
                 throw endpointError('固定模型路径包含无效的百分号编码');
             }
-            if (!/^[A-Za-z0-9._-]+$/.test(effectiveModel)) {
+            if (!/^[A-Za-z0-9._-]{1,100}$/.test(effectiveModel)) {
                 throw endpointError('固定模型路径中的模型名称无效');
             }
         }
@@ -1043,7 +1062,8 @@ function validateOptions() {
     }
 
     try {
-        resolveApiEndpoint();
+        var endpoint = resolveApiEndpoint();
+        SPEECH_MODELS.resolveRequestFormat(endpoint.effectiveModel, readOption('requestFormat'));
     } catch (e) {
         return e.pluginError || makeParamError('自定义 API 地址无效', e.message || String(e));
     }
@@ -1083,7 +1103,7 @@ function buildSpeechPrompt(text, instructions) {
 }
 
 function usesLegacySpeechPrompt(model) {
-    return LEGACY_PROMPT_MODEL_PATTERN.test(String(model == null ? '' : model).trim());
+    return SPEECH_MODELS.resolveRequestFormat(model, readOption('requestFormat')) === 'legacy';
 }
 
 function buildSpeechRequestBody(text, voice, instructions, model) {
@@ -1101,7 +1121,7 @@ function buildSpeechRequestBody(text, voice, instructions, model) {
         };
     }
 
-    // Gemini 3.8 and later speak the text verbatim, so no wrapper prompt is
+    // Models with the verbatim capability speak the text as-is, so no wrapper is
     // sent; anything else in the text would be read aloud. Style directions
     // travel in speechMetadata next to the transcript instead.
     var part = { text: text };
@@ -1124,12 +1144,9 @@ function normalizeErrorMessage(value, secret) {
         return '';
     }
 
-    var message = typeof value === 'string' ? value : safeStringify(value);
+    var message = typeof value === 'string' ? redactSecret(value, secret) : safeStringify(value, secret);
     if (typeof message !== 'string') {
-        message = String(value);
-    }
-    if (message.length > 2000) {
-        message = message.substring(0, 2000);
+        message = redactSecret(String(value), secret);
     }
     message = redactSecret(message, secret).replace(/\s+/g, ' ').trim();
     if (message.length > 500) {
@@ -1236,7 +1253,7 @@ function inspectAudioResponse(responseData, secret) {
         );
     }
 
-    if (!data.candidates || !data.candidates.length || !data.candidates[0]) {
+    if (!Array.isArray(data.candidates) || !data.candidates.length || !data.candidates[0]) {
         throw responseError('API 返回数据异常', '未找到有效的候选结果');
     }
 
@@ -1269,7 +1286,7 @@ function inspectAudioResponse(responseData, secret) {
     }
 
     var parts = candidate.content && candidate.content.parts;
-    if (!parts || !parts.length) {
+    if (!Array.isArray(parts) || !parts.length) {
         throw responseError('API 返回数据异常', '候选结果中无内容');
     }
     if (parts.length > 100) {
@@ -1280,12 +1297,19 @@ function inspectAudioResponse(responseData, secret) {
     var audioPartCount = 0;
     var i;
     for (i = 0; i < parts.length; i++) {
-        if (parts[i] && parts[i].inlineData && parts[i].inlineData.data &&
-            typeof parts[i].inlineData.mimeType === 'string' &&
-            parts[i].inlineData.mimeType.length <= 512 &&
-            /^audio\//i.test(parts[i].inlineData.mimeType.trim())) {
+        if (!parts[i] || !parts[i].inlineData) {
+            continue;
+        }
+        var blob = parts[i].inlineData;
+        if (typeof blob.mimeType !== 'string' || !blob.mimeType.trim() || blob.mimeType.length > 512) {
+            throw responseError('API 返回数据异常', '内容片段的 mimeType 无效');
+        }
+        if (/^audio\//i.test(blob.mimeType.trim())) {
             audioPartCount += 1;
-            inlineData = parts[i].inlineData;
+            if (typeof blob.data !== 'string' || !blob.data.length) {
+                throw responseError('API 返回数据异常', '音频片段的数据为空或格式错误');
+            }
+            inlineData = blob;
         }
     }
     if (!inlineData) {
@@ -1318,121 +1342,44 @@ function inspectAudioResponse(responseData, secret) {
     };
 }
 
-function remainingBudgetMs(startedAt, totalBudgetMs) {
-    return totalBudgetMs - (nowMs() - startedAt);
-}
-
-function requestTimeoutSeconds(remainingMs, maximumSeconds) {
-    var seconds = Math.ceil(remainingMs / 1000);
-    if (seconds < 1) {
-        seconds = 1;
-    }
-    if (maximumSeconds && seconds > maximumSeconds) {
-        seconds = maximumSeconds;
-    }
-    return seconds;
+function requestSpeechAudio(config, completion) {
+    SPEECH_REQUESTS.requestAudio({
+        http: $http,
+        now: nowMs,
+        url: config.endpoint.url,
+        apiKey: config.apiKey,
+        body: config.body,
+        startedAt: config.startedAt,
+        totalBudgetMs: config.totalBudgetMs,
+        attemptTimeoutSeconds: config.attemptTimeoutSeconds,
+        timeoutError: config.timeoutError,
+        onEvent: config.onEvent,
+        parseHttpError: parseHttpError,
+        toServiceError: toServiceError,
+        inspectAudioResponse: inspectAudioResponse,
+        makeApiError: makeApiError,
+        normalizeErrorMessage: normalizeErrorMessage
+    }, completion);
 }
 
 function pluginValidate(completion) {
-    var done = false;
-    function finish(result) {
-        if (done) {
-            return;
-        }
-        done = true;
-        completion(result);
-    }
-
     var optionError = validateOptions();
     if (optionError) {
-        finish({ result: false, error: optionError });
+        completion({ result: false, error: optionError });
         return;
     }
-
-    var endpoint;
-    try {
-        endpoint = resolveApiEndpoint();
-    } catch (e) {
-        finish({ result: false, error: e.pluginError || makeParamError('自定义 API 地址无效', e.message) });
-        return;
-    }
-
-    var apiKey = readOption('apiKey');
-    var voice = getVoice();
-    // Send the configured instructions too, so validation exercises exactly the
-    // request shape playback will use: speechMetadata on Gemini 3.8, the
-    // instruction block inside the prompt on legacy models.
-    var requestBody = buildSpeechRequestBody(
-        'Hi',
-        voice,
-        readOption('instructions'),
-        endpoint.effectiveModel
-    );
-    var startedAt = nowMs();
-
-    function sendValidationAttempt(attempt) {
-        var remainingMs = remainingBudgetMs(startedAt, VALIDATION_TOTAL_TIMEOUT_MS);
-        if (remainingMs <= 0) {
-            finish({ result: false, error: makeApiError('验证请求超时', '已超过 60 秒总预算') });
-            return;
-        }
-
-        try {
-            $http.request({
-                method: 'POST',
-                url: endpoint.url,
-                header: {
-                    'x-goog-api-key': apiKey,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
-                body: requestBody,
-                timeout: requestTimeoutSeconds(remainingMs, VALIDATION_ATTEMPT_TIMEOUT_SECONDS),
-                handler: function (resp) {
-                    if (done) {
-                        return;
-                    }
-                    if (remainingBudgetMs(startedAt, VALIDATION_TOTAL_TIMEOUT_MS) <= 0) {
-                        finish({ result: false, error: makeApiError('验证请求超时', '已超过 60 秒总预算') });
-                        return;
-                    }
-                    if (!resp || resp.error) {
-                        finish({ result: false, error: toServiceError(resp && resp.error, apiKey) });
-                        return;
-                    }
-
-                    var statusCode = resp.response ? Number(resp.response.statusCode) : 0;
-                    if (statusCode === 500 && attempt === 0 &&
-                        remainingBudgetMs(startedAt, VALIDATION_TOTAL_TIMEOUT_MS) > 1000) {
-                        sendValidationAttempt(1);
-                        return;
-                    }
-                    if (statusCode !== 200) {
-                        finish({ result: false, error: parseHttpError(resp, apiKey) });
-                        return;
-                    }
-
-                    try {
-                        inspectAudioResponse(resp.data, apiKey);
-                        if (remainingBudgetMs(startedAt, VALIDATION_TOTAL_TIMEOUT_MS) <= 0) {
-                            finish({ result: false, error: makeApiError('验证请求超时', '已超过 60 秒总预算') });
-                            return;
-                        }
-                        finish({ result: true });
-                    } catch (e) {
-                        finish({
-                            result: false,
-                            error: e.pluginError || makeApiError('API 返回数据异常', e.message || String(e))
-                        });
-                    }
-                }
-            });
-        } catch (e) {
-            finish({ result: false, error: toServiceError(e, apiKey) });
-        }
-    }
-
-    sendValidationAttempt(0);
+    var endpoint = resolveApiEndpoint();
+    requestSpeechAudio({
+        endpoint: endpoint,
+        apiKey: readOption('apiKey'),
+        body: buildSpeechRequestBody('Hi', getVoice(), readOption('instructions'), endpoint.effectiveModel),
+        startedAt: nowMs(),
+        totalBudgetMs: VALIDATION_TOTAL_TIMEOUT_MS,
+        attemptTimeoutSeconds: VALIDATION_ATTEMPT_TIMEOUT_SECONDS,
+        timeoutError: makeApiError('验证请求超时', '已超过 60 秒总预算')
+    }, function (outcome) {
+        completion(outcome.error ? { result: false, error: outcome.error } : { result: true });
+    });
 }
 
 function tts(query, completion) {
@@ -1450,16 +1397,11 @@ function tts(query, completion) {
         finish({ error: optionError });
         return;
     }
-
     query = query || {};
     var text = query.text == null ? '' : String(query.text);
     if (text.length > MAX_TTS_TEXT_CHARS) {
-        finish({
-            error: makeParamError(
-                '文本过长，请拆分后重试',
-                '最多允许 ' + MAX_TTS_TEXT_CHARS + ' 个 UTF-16 字符，当前为 ' + text.length
-            )
-        });
+        finish({ error: makeParamError('文本过长，请拆分后重试',
+            '最多允许 ' + MAX_TTS_TEXT_CHARS + ' 个 UTF-16 字符，当前为 ' + text.length) });
         return;
     }
     if (!text.trim()) {
@@ -1467,190 +1409,127 @@ function tts(query, completion) {
         return;
     }
 
-    var endpoint;
-    try {
-        endpoint = resolveApiEndpoint();
-    } catch (e) {
-        finish({ error: e.pluginError || makeParamError('自定义 API 地址无效', e.message) });
-        return;
-    }
-
+    var endpoint = resolveApiEndpoint();
     var apiKey = readOption('apiKey');
     var model = endpoint.effectiveModel;
     var voice = getVoice();
     var instructions = readOption('instructions');
+    var requestFormat = SPEECH_MODELS.resolveRequestFormat(model, readOption('requestFormat'));
     var requestId = nextRequestId();
     var requestStartedAt = nowMs();
     var requestBody = buildSpeechRequestBody(text, voice, instructions, model);
 
-    logTtsInfo(
-        requestId,
-        'start',
-        'chars=' + text.length +
+    logTtsInfo(requestId, 'start', 'chars=' + text.length +
         ' prompt_chars=' + requestBody.contents[0].parts[0].text.length +
         ' instructions=' + (instructions ? 'on' : 'off') +
-        ' request=' + (usesLegacySpeechPrompt(model) ? 'legacy-prompt' : 'verbatim') +
+        ' request=' + (requestFormat === 'legacy' ? 'legacy-prompt' : 'verbatim') +
         ' model=' + sanitizeLogValue(model, apiKey) +
-        ' voice=' + sanitizeLogValue(voice, apiKey)
-    );
+        ' voice=' + sanitizeLogValue(voice, apiKey));
 
-    var cacheKey = makeCacheKey(
-        text,
-        query.lang,
-        endpoint.url,
-        model,
-        voice,
-        instructions,
-        apiKey
-    );
+    var cacheKey = makeCacheKey(text, query.lang, endpoint.url, model, voice, instructions, apiKey, requestFormat);
     var cachedEntry = getCachedAudioResult(cacheKey);
     if (cachedEntry) {
-        var cachedResult = createTtsResult(cachedEntry.result.value, model, voice, 'hit');
-        logTtsInfo(
-            requestId,
-            'cache_hit',
-            'total_ms=' + (nowMs() - requestStartedAt) +
+        logTtsInfo(requestId, 'cache_hit', 'total_ms=' + (nowMs() - requestStartedAt) +
             ' age_ms=' + (nowMs() - cachedEntry.storedAt) +
-            ' wav_base64_chars=' + cachedEntry.result.value.length
-        );
-        finish({ result: cachedResult });
+            ' wav_base64_chars=' + cachedEntry.result.value.length);
+        finish({ result: createTtsResult(cachedEntry.result.value, model, voice, 'hit') });
         return;
     }
 
-    function sendTtsAttempt(attempt) {
-        var remainingMs = remainingBudgetMs(requestStartedAt, TTS_TOTAL_TIMEOUT_MS);
-        if (remainingMs <= 0) {
-            logTtsError(requestId, 'timeout', 'attempt=' + (attempt + 1) + ' total_ms=' +
-                (nowMs() - requestStartedAt));
-            finish({ error: makeApiError('语音生成超时', '已超过 115 秒总预算') });
-            return;
+    var waiter = { requestId: requestId, startedAt: requestStartedAt, finish: finish };
+    var pending = INFLIGHT_TTS[cacheKey];
+    var pendingAgeMs = pending ? nowMs() - pending.startedAt : -1;
+    if (pending && pendingAgeMs >= 0 && pendingAgeMs < TTS_TOTAL_TIMEOUT_MS) {
+        pending.waiters.push(waiter);
+        logTtsInfo(requestId, 'request_join', 'source_request=' + pending.requestId);
+        return;
+    }
+    // A stalled or clock-invalid request must not prevent a new attempt. Its
+    // eventual completion only owns its own waiter list and cannot delete this entry.
+    pending = { requestId: requestId, startedAt: requestStartedAt, waiters: [waiter] };
+    INFLIGHT_TTS[cacheKey] = pending;
+
+    requestSpeechAudio({
+        endpoint: endpoint,
+        apiKey: apiKey,
+        body: requestBody,
+        startedAt: requestStartedAt,
+        totalBudgetMs: TTS_TOTAL_TIMEOUT_MS,
+        timeoutError: makeApiError('语音生成超时', '已超过 115 秒总预算'),
+        onEvent: function (stage, details) {
+            var message = 'attempt=' + details.attempt;
+            if (typeof details.requestElapsedMs === 'number') {
+                message += ' request_ms=' + details.requestElapsedMs;
+            }
+            if (typeof details.totalElapsedMs === 'number') {
+                message += ' total_ms=' + details.totalElapsedMs;
+            }
+            if (typeof details.statusCode === 'number') {
+                message += ' status=' + details.statusCode;
+            }
+            if (stage === 'retry') {
+                logTtsInfo(requestId, stage, message + ' next_attempt=2 reason=http_500');
+            } else {
+                if (details.error) {
+                    message += ' message=' + sanitizeLogValue(
+                        details.error.message + ' ' + (details.error.addition || ''), apiKey);
+                }
+                logTtsError(requestId, stage, message);
+            }
         }
-
-        try {
-            $http.request({
-                method: 'POST',
-                url: endpoint.url,
-                header: {
-                    'x-goog-api-key': apiKey,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
-                body: requestBody,
-                timeout: requestTimeoutSeconds(remainingMs),
-                handler: function (resp) {
-                    if (done) {
-                        return;
-                    }
-
-                    var requestElapsedMs = nowMs() - requestStartedAt;
-                    if (remainingBudgetMs(requestStartedAt, TTS_TOTAL_TIMEOUT_MS) <= 0) {
-                        logTtsError(requestId, 'timeout', 'attempt=' + (attempt + 1) +
-                            ' total_ms=' + requestElapsedMs);
-                        finish({ error: makeApiError('语音生成超时', '已超过 115 秒总预算') });
-                        return;
-                    }
-                    if (!resp || resp.error) {
-                        logTtsError(
-                            requestId,
-                            'network_error',
-                            'attempt=' + (attempt + 1) +
-                            ' request_ms=' + requestElapsedMs +
-                            ' message=' + sanitizeLogValue(
-                                resp && resp.error ? (resp.error.message || resp.error) : 'empty response',
-                                apiKey
-                            )
-                        );
-                        finish({ error: toServiceError(resp && resp.error, apiKey) });
-                        return;
-                    }
-
-                    var statusCode = resp.response ? Number(resp.response.statusCode) : 0;
-                    if (statusCode === 500 && attempt === 0 &&
-                        remainingBudgetMs(requestStartedAt, TTS_TOTAL_TIMEOUT_MS) > 1000) {
-                        logTtsInfo(
-                            requestId,
-                            'retry',
-                            'attempt=2 reason=http_500 elapsed_ms=' + requestElapsedMs
-                        );
-                        sendTtsAttempt(1);
-                        return;
-                    }
-                    if (statusCode !== 200) {
-                        var httpError = parseHttpError(resp, apiKey);
-                        logTtsError(
-                            requestId,
-                            'http_error',
-                            'attempt=' + (attempt + 1) +
-                            ' request_ms=' + requestElapsedMs +
-                            ' status=' + statusCode +
-                            ' message=' + sanitizeLogValue(
-                                httpError.message + ' ' + (httpError.addition || ''),
-                                apiKey
-                            )
-                        );
-                        finish({ error: httpError });
-                        return;
-                    }
-
-                    try {
-                        var convertStartedAt = nowMs();
-                        var audio = inspectAudioResponse(resp.data, apiKey);
-                        var convertElapsedMs = nowMs() - convertStartedAt;
-                        var totalElapsedMs = nowMs() - requestStartedAt;
-                        if (remainingBudgetMs(requestStartedAt, TTS_TOTAL_TIMEOUT_MS) <= 0) {
-                            logTtsError(
-                                requestId,
-                                'timeout',
-                                'attempt=' + (attempt + 1) + ' total_ms=' + totalElapsedMs
-                            );
-                            finish({ error: makeApiError('语音生成超时', '已超过 115 秒总预算') });
-                            return;
-                        }
-                        var result = createTtsResult(audio.wavBase64, model, voice, 'miss');
-                        var cacheStored = setCachedAudioResult(cacheKey, result);
-
-                        logTtsInfo(
-                            requestId,
-                            'success',
-                            'status=' + statusCode +
-                            ' attempt=' + (attempt + 1) +
-                            ' request_ms=' + requestElapsedMs +
-                            ' convert_ms=' + convertElapsedMs +
-                            ' total_ms=' + totalElapsedMs +
-                            ' cache_store=' + (cacheStored ? 'yes' : 'no') +
-                            ' mime=' + sanitizeLogValue(audio.mimeType, apiKey) +
-                            ' format=' + audio.audioFormat +
-                            ' audio_base64_chars=' + audio.audioBase64Chars +
-                            ' wav_base64_chars=' + audio.wavBase64.length
-                        );
-                        finish({ result: result });
-                    } catch (e) {
-                        var processingError = e.pluginError ||
-                            makeApiError('音频处理失败', e.message || String(e));
-                        logTtsError(
-                            requestId,
-                            'processing_error',
-                            'attempt=' + (attempt + 1) +
-                            ' request_ms=' + requestElapsedMs +
-                            ' total_ms=' + (nowMs() - requestStartedAt) +
-                            ' message=' + sanitizeLogValue(
-                                processingError.message + ' ' + (processingError.addition || ''),
-                                apiKey
-                            )
-                        );
-                        finish({ error: processingError });
+    }, function (outcome) {
+        if (INFLIGHT_TTS[cacheKey] === pending) {
+            delete INFLIGHT_TTS[cacheKey];
+        }
+        var audio = outcome.audio;
+        if (audio) {
+            var cacheStored = setCachedAudioResult(cacheKey, createTtsResult(audio.wavBase64, model, voice, 'miss'));
+            var metrics = outcome.metrics;
+            logTtsInfo(requestId, 'success', 'status=' + metrics.statusCode +
+                ' attempt=' + metrics.attempt +
+                ' request_ms=' + metrics.requestElapsedMs +
+                ' convert_ms=' + metrics.convertElapsedMs +
+                ' total_ms=' + metrics.totalElapsedMs +
+                ' cache_store=' + (cacheStored ? 'yes' : 'no') +
+                ' mime=' + sanitizeLogValue(audio.mimeType, apiKey) +
+                ' format=' + audio.audioFormat +
+                ' audio_base64_chars=' + audio.audioBase64Chars +
+                ' wav_base64_chars=' + audio.wavBase64.length);
+        }
+        var waiters = pending.waiters;
+        pending.waiters = [];
+        var i;
+        for (i = 0; i < waiters.length; i++) {
+            var target = waiters[i];
+            var value;
+            if (outcome.error) {
+                // Host callbacks can mutate their result; do not share mutable envelopes.
+                var error = {};
+                var key;
+                for (key in outcome.error) {
+                    if (Object.prototype.hasOwnProperty.call(outcome.error, key)) {
+                        error[key] = outcome.error[key];
                     }
                 }
-            });
-        } catch (e) {
-            logTtsError(
-                requestId,
-                'request_setup_error',
-                'attempt=' + (attempt + 1) + ' message=' + sanitizeLogValue(e.message || e, apiKey)
-            );
-            finish({ error: toServiceError(e, apiKey) });
+                value = { error: error };
+            } else {
+                value = { result: createTtsResult(audio.wavBase64, model, voice,
+                    i === 0 ? 'miss' : 'coalesced') };
+            }
+            if (i > 0) {
+                var sharedMessage = 'source_request=' + requestId +
+                    ' total_ms=' + (nowMs() - target.startedAt);
+                if (outcome.error) {
+                    logTtsError(target.requestId, 'shared_error', sharedMessage);
+                } else {
+                    logTtsInfo(target.requestId, 'shared_success', sharedMessage);
+                }
+            }
+            try {
+                target.finish(value);
+            } catch (e) {
+                logTtsError(target.requestId, 'completion_error', sanitizeLogValue(e.message || e, apiKey));
+            }
         }
-    }
-
-    sendTtsAttempt(0);
+    });
 }
