@@ -23,17 +23,18 @@ function plain(value) {
 
 const DEFAULT_MODEL = 'gemini-3.8-flash-tts';
 const VERBATIM_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
-const LEGACY_MODELS = [
+const RETIRED_MODELS = [
     'gemini-3.1-flash-tts-preview',
     'gemini-2.5-pro-preview-tts',
     'gemini-2.5-flash-preview-tts'
 ];
-const LEGACY_MODEL = LEGACY_MODELS[0];
+const RETIRED_MODEL = RETIRED_MODELS[0];
+const REPLACEMENT_MODEL = 'gemini-3.8-flash-tts';
 
 test('legacy TTS requests use an explicit audio-only prompt and transcript boundary', async () => {
     for (const instructions of ['', 'Speak in a calm, reassuring voice']) {
         const harness = createHarness({
-            options: { model: LEGACY_MODEL, instructions },
+            options: { requestFormat: 'legacy', instructions },
             responses: [successResponse()]
         });
 
@@ -137,7 +138,7 @@ for (const malformedData of [
 }
 
 test('custom API URL parsing distinguishes origins from complete paths and preserves query strings', () => {
-    const model = 'gemini-3.1-flash-tts-preview';
+    const model = 'gemini-3.8-flash-lite-tts';
     const cases = [
         [
             'https://proxy.example',
@@ -164,8 +165,8 @@ test('custom API URL parsing distinguishes origins from complete paths and prese
             'https://proxy.example/custom/tts?token=a%2Fb&mode=1'
         ],
         [
-            'https://proxy.example/v1beta/models/gemini-2.5-pro-preview-tts?alt=json',
-            'https://proxy.example/v1beta/models/gemini-2.5-pro-preview-tts:generateContent?alt=json'
+            'https://proxy.example/v1beta/models/gemini-3.8-flash-lite-tts?alt=json',
+            'https://proxy.example/v1beta/models/gemini-3.8-flash-lite-tts:generateContent?alt=json'
         ],
         [
             'https://proxy.example/custom:generateContent?token=abc',
@@ -182,8 +183,8 @@ test('custom API URL parsing distinguishes origins from complete paths and prese
 test('a fixed-model endpoint reports the model that is actually called', async () => {
     const harness = createHarness({
         options: {
-            apiUrl: 'https://proxy.example/v1beta/models/gemini-2.5-pro-preview-tts',
-            model: 'gemini-3.1-flash-tts-preview'
+            apiUrl: 'https://proxy.example/v1beta/models/gemini-3.8-flash-lite-tts',
+            model: DEFAULT_MODEL
         },
         responses: [successResponse()]
     });
@@ -191,8 +192,12 @@ test('a fixed-model endpoint reports the model that is actually called', async (
     const output = await callTts(harness, 'Use the endpoint model.');
     assert.equal(
         output.result.raw.model,
-        'gemini-2.5-pro-preview-tts',
+        'gemini-3.8-flash-lite-tts',
         'metadata must not claim the menu model when the endpoint fixes another model'
+    );
+    assert.equal(
+        harness.requests[0].url,
+        'https://proxy.example/v1beta/models/gemini-3.8-flash-lite-tts:generateContent'
     );
 });
 
@@ -340,7 +345,7 @@ test('successful STOP audio is cached immediately and expires after its TTL', as
 test('prompt boundary selection also avoids markers embedded in style instructions', async () => {
     const harness = createHarness({
         options: {
-            model: LEGACY_MODEL,
+            requestFormat: 'legacy',
             instructions: 'Use this literal token as data: <<<BOB_TTS_TRANSCRIPT_BEGIN>>>'
         },
         responses: [successResponse()]
@@ -685,67 +690,122 @@ for (const model of VERBATIM_MODELS) {
     });
 }
 
-for (const model of LEGACY_MODELS) {
-    test(`${model} keeps the marker prompt and prebuiltVoiceConfig`, async () => {
+for (const model of RETIRED_MODELS) {
+    test(`${model} is sent to Gemini 3.8 Flash TTS with the verbatim request`, async () => {
+        const text = 'Retired transcript.';
         const harness = createHarness({
             options: { model, instructions: 'Calm and even' },
             responses: [successResponse()]
         });
 
-        const output = await callTts(harness, 'Legacy transcript.');
+        const output = await callTts(harness, text);
         assert.ok(output.result);
-
-        const body = harness.requests[0].body;
-        const part = body.contents[0].parts[0];
-        assert.match(part.text, /<<<BOB_TTS_TRANSCRIPT_BEGIN>>>/);
-        assert.match(part.text, /Calm and even/);
-        assert.equal('speechMetadata' in part, false);
-        assert.deepEqual(
-            plain(body.generationConfig.speechConfig),
-            { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }
+        assert.equal(output.result.raw.model, REPLACEMENT_MODEL);
+        assert.equal(
+            harness.requests[0].url,
+            `https://generativelanguage.googleapis.com/v1beta/models/${REPLACEMENT_MODEL}:generateContent`
         );
-        assert.match(JSON.stringify(harness.logs), /request=legacy-prompt/);
+
+        const part = harness.requests[0].body.contents[0].parts[0];
+        assert.equal(part.text, text);
+        assert.deepEqual(plain(part.speechMetadata), { style: 'Calm and even' });
+        assert.deepEqual(
+            plain(harness.requests[0].body.generationConfig.speechConfig),
+            { voiceConfig: { voice: 'Kore' } }
+        );
+        assert.match(JSON.stringify(harness.logs), new RegExp('retired_from=' + model));
+        assert.match(JSON.stringify(harness.logs), /request=verbatim/);
     });
 }
 
-test('the request format follows the endpoint model rather than the menu model', async () => {
-    const legacyEndpoint = createHarness({
+test('a retired model in a standard path is rewritten even when the menu names another model', async () => {
+    const harness = createHarness({
         options: {
-            model: DEFAULT_MODEL,
-            apiUrl: `https://proxy.example/v1beta/models/${LEGACY_MODEL}`
+            model: 'gemini-3.8-flash-lite-tts',
+            apiUrl: `https://proxy.example/v1/models/${RETIRED_MODEL.toUpperCase()}?alt=json`,
+            instructions: 'Calm'
         },
         responses: [successResponse()]
     });
-    const verbatimEndpoint = createHarness({
+
+    const output = await callTts(harness, 'Rewrite the fixed path.');
+    assert.equal(output.result.raw.model, REPLACEMENT_MODEL);
+    assert.equal(
+        harness.requests[0].url,
+        `https://proxy.example/v1/models/${REPLACEMENT_MODEL}:generateContent?alt=json`
+    );
+    assert.equal(promptFrom(harness.requests[0]), 'Rewrite the fixed path.');
+    assert.match(JSON.stringify(harness.logs), new RegExp('retired_from=' + RETIRED_MODEL));
+});
+
+test('a custom endpoint keeps its URL when a retired menu model changes only the request shape', async () => {
+    const harness = createHarness({
         options: {
-            model: LEGACY_MODEL,
+            model: RETIRED_MODEL,
+            apiUrl: 'https://proxy.example/custom/tts?token=abc',
+            instructions: 'Calm'
+        },
+        responses: [successResponse()]
+    });
+
+    const output = await callTts(harness, 'Keep the proxy path.');
+    assert.equal(output.result.raw.model, REPLACEMENT_MODEL);
+    assert.equal(harness.requests[0].url, 'https://proxy.example/custom/tts?token=abc');
+    assert.equal(promptFrom(harness.requests[0]), 'Keep the proxy path.');
+    assert.equal(harness.requests[0].body.contents[0].parts[0].speechMetadata.style, 'Calm');
+});
+
+test('an explicit legacy format still wraps the transcript after a retired model is replaced', async () => {
+    const harness = createHarness({
+        options: { model: RETIRED_MODEL, requestFormat: 'legacy', instructions: 'Calm and even' },
+        responses: [successResponse()]
+    });
+
+    const output = await callTts(harness, 'Legacy transcript.');
+    assert.equal(output.result.raw.model, REPLACEMENT_MODEL);
+    assert.match(harness.requests[0].url, new RegExp('/models/' + REPLACEMENT_MODEL + ':generateContent$'));
+    const part = harness.requests[0].body.contents[0].parts[0];
+    assert.match(part.text, /<<<BOB_TTS_TRANSCRIPT_BEGIN>>>/);
+    assert.match(part.text, /Calm and even/);
+    assert.equal('speechMetadata' in part, false);
+    assert.equal(
+        harness.requests[0].body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName,
+        'Kore'
+    );
+});
+
+test('the request format follows the endpoint model rather than the menu model', async () => {
+    const endpointWins = createHarness({
+        options: {
+            model: DEFAULT_MODEL,
+            apiUrl: 'https://proxy.example/v1beta/models/gemini-3.8-flash-lite-tts'
+        },
+        responses: [successResponse()]
+    });
+    const menuRetired = createHarness({
+        options: {
+            model: RETIRED_MODEL,
             apiUrl: 'https://proxy.example/v1beta/models/gemini-3.8-flash-lite-tts'
         },
         responses: [successResponse()]
     });
 
-    assert.ok((await callTts(legacyEndpoint, 'Route by endpoint.')).result);
-    assert.ok((await callTts(verbatimEndpoint, 'Route by endpoint.')).result);
-
-    const legacyBody = legacyEndpoint.requests[0].body;
-    assert.match(promptFrom(legacyEndpoint.requests[0]), /transcript/i);
-    assert.equal(legacyBody.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Kore');
-
-    const verbatimBody = verbatimEndpoint.requests[0].body;
-    assert.equal(promptFrom(verbatimEndpoint.requests[0]), 'Route by endpoint.');
-    assert.equal(verbatimBody.generationConfig.speechConfig.voiceConfig.voice, 'Kore');
+    assert.equal((await callTts(endpointWins, 'Route by endpoint.')).result.raw.model,
+        'gemini-3.8-flash-lite-tts');
+    assert.equal((await callTts(menuRetired, 'Route by endpoint.')).result.raw.model,
+        'gemini-3.8-flash-lite-tts');
+    assert.equal(promptFrom(endpointWins.requests[0]), 'Route by endpoint.');
+    assert.equal(promptFrom(menuRetired.requests[0]), 'Route by endpoint.');
+    assert.equal(endpointWins.requests[0].body.generationConfig.speechConfig.voiceConfig.voice, 'Kore');
+    assert.doesNotMatch(JSON.stringify(menuRetired.logs), /retired_from=/);
 });
 
 test('model request formats come from explicit capabilities and reject unknown models', () => {
     const harness = createHarness();
     for (const model of [
-        ...LEGACY_MODELS,
+        ...VERBATIM_MODELS,
+        ...RETIRED_MODELS,
         ' GEMINI-3.1-FLASH-TTS-PREVIEW '
-    ]) {
-        assert.equal(harness.context.usesLegacySpeechPrompt(model), true, model);
-    }
-    for (const model of [
-        ...VERBATIM_MODELS
     ]) {
         assert.equal(harness.context.usesLegacySpeechPrompt(model), false, model);
     }
@@ -780,7 +840,7 @@ test('validation sends the same request shape as playback, including configured 
     assert.equal('speechMetadata' in bare.requests[0].body.contents[0].parts[0], false);
 
     const legacy = createHarness({
-        options: { model: LEGACY_MODEL, instructions: 'Warm and slow' },
+        options: { requestFormat: 'legacy', instructions: 'Warm and slow' },
         responses: [successResponse()]
     });
     assert.equal((await callValidate(legacy)).result, true);

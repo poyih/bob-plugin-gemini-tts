@@ -2,7 +2,9 @@
 
 使用 Google Gemini TTS API 为 [Bob](https://bobtranslate.com/) 提供语音合成功能。
 
-支持 Gemini 3.8 Flash TTS、Gemini 3.8 Flash-Lite TTS（正式版），以及旧版 Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 模型，提供 30 种预置声音。
+支持 Gemini 3.8 Flash TTS、Gemini 3.8 Flash-Lite TTS（正式版），提供 30 种预置声音。
+
+Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 最早于 2026-11-17 关闭。设置或标准模型路径里如果仍是这三个 ID，插件会自动改用 `gemini-3.8-flash-tts`。
 
 支持通过「语音指令」和正文中的 Gemini 音频标签控制语气、停顿和情绪。
 
@@ -19,7 +21,7 @@
 | --- | --- | --- |
 | API Key | 是 | Gemini API Key，在 [Google AI Studio](https://aistudio.google.com/apikey) 获取 |
 | 自定义 API 地址 | 否 | 默认 `https://generativelanguage.googleapis.com`，地址规则及隐私风险见下文 |
-| 模型 | 否 | 默认 `gemini-3.8-flash-tts`，可选 3.8 Flash-Lite 以及旧版 3.1 Flash / 2.5 Pro / 2.5 Flash |
+| 模型 | 否 | 默认 `gemini-3.8-flash-tts`，可选 3.8 Flash-Lite。三个旧预览 ID 会自动改发到 3.8 Flash |
 | 请求格式 | 否 | 默认按已知模型自动选择；未知模型或代理别名需明确选择「3.8 格式」或「旧版格式」 |
 | 声音 | 否 | 默认 `Kore`，可选 30 种预置声音 |
 | 语音指令 | 否 | 用于控制语音风格和语气，如"用欢快的语气朗读"，不会被朗读出来 |
@@ -30,13 +32,15 @@
 | --- | --- | --- | --- |
 | Gemini 3.8 Flash TTS | `gemini-3.8-flash-tts` | 正式版 | 表现力最强，支持 130 种语言（默认） |
 | Gemini 3.8 Flash-Lite TTS | `gemini-3.8-flash-lite-tts` | 正式版 | 更快、更省，支持 101 种语言，Google 推荐用它替代 3.1 Flash TTS |
-| Gemini 3.1 Flash TTS | `gemini-3.1-flash-tts-preview` | 旧版预览 | 仍可使用，Google 已建议迁移到 3.8 |
-| Gemini 2.5 Pro TTS | `gemini-2.5-pro-preview-tts` | 旧版预览 | 偏高质量 |
-| Gemini 2.5 Flash TTS | `gemini-2.5-flash-preview-tts` | 旧版预览 | 偏低延迟 |
+| Gemini 3.1 Flash TTS | `gemini-3.1-flash-tts-preview` | 2026-11-17 起最早可关闭 | 不再直接请求，自动改用 `gemini-3.8-flash-tts` |
+| Gemini 2.5 Pro TTS | `gemini-2.5-pro-preview-tts` | 2026-11-17 起最早可关闭 | 同上 |
+| Gemini 2.5 Flash TTS | `gemini-2.5-flash-preview-tts` | 2026-11-17 起最早可关闭 | 同上 |
 
-两代模型的接口约定不同，插件通过明确的模型能力表选择请求格式（自定义地址中固定的模型路径优先于菜单选择）。未知模型和代理别名不会按版本号推测协议，请在「请求格式」中指定其兼容格式；已知模型通常保留「自动」即可。
+插件按模型能力表选择请求格式，不用版本号猜测协议。自定义地址里的 `/v1/models/{model}` 或 `/v1beta/models/{model}` 优先于菜单；如果这段路径是上面三个旧 ID，路径和请求都会改成 `gemini-3.8-flash-tts`。其他非标准路径保持原样，但菜单里的旧 ID 仍会让自动格式按 3.8 生成请求体。未知模型和代理别名请在「请求格式」中指定兼容格式；已知的 3.8 模型保留「自动」即可。
 
-| | Gemini 3.8 系列 | 3.1 / 2.5 旧版 |
+手动选择「旧版格式」时，即使模型 ID 已被替换，正文仍使用旧版提示词。3.8 会逐字朗读这些提示，所以只有代理确实要求旧协议时才这样设置。
+
+| | Gemini 3.8 系列 | 旧版格式（手动选择） |
 | --- | --- | --- |
 | 正文 | 原样发送、逐字朗读，不加任何前导提示 | 包裹在"仅生成语音"前导与 transcript 边界标记中 |
 | 语音指令 | 通过 `speechMetadata.style` 随正文发送，不会被朗读 | 作为提示词中的 PERFORMANCE INSTRUCTIONS 段发送 |
@@ -53,6 +57,7 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 
 - 仅主机根地址会自动拼接 `/v1beta/models/{model}:generateContent`，例如 `https://proxy.example.com`
 - 以 `/v1beta`、`/v1beta/models` 结尾的地址会补齐缺少的模型路径；已包含 `/v1/models/{model}` 或 `/v1beta/models/{model}` 的地址只会补上 `:generateContent`
+- 上述标准模型路径如果使用三个旧预览 ID，会改写成 `gemini-3.8-flash-tts`，查询参数保留
 - 其他带非根路径的地址均视为完整代理 endpoint 并原样使用，查询参数也会保留；例如 `https://proxy.example.com/custom/tts`
 - 地址不得包含用户名、密码或 URL fragment（`#...`）
 - 必须使用 HTTPS；仅 `localhost`、`127.0.0.1` 和 `[::1]` 本机地址允许 HTTP
@@ -62,7 +67,7 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 ### 请求行为、长文本与重试
 
 - 3.8 系列：正文原样发送并逐字朗读；「语音指令」通过 `speechMetadata.style` 传给模型，用于描述整段的语气、角色、口音和语速
-- 3.1 / 2.5 旧版：插件会自动加入"仅生成语音并准确朗读"的 TTS 前导，并将"语音指令"和朗读正文置于明确、彼此分离的边界中；语音指令用于描述风格，不会作为正文直接拼接
+- 旧版格式：仅在「请求格式」设为「旧版格式」时使用。插件会加入"仅生成语音并准确朗读"的 TTS 前导，并将"语音指令"和朗读正文置于明确、彼此分离的边界中；语音指令用于描述风格，不会作为正文直接拼接
 - Gemini 的提示词执行具有概率性，无法保证每次都严格呈现所有风格效果
 - 每次朗读是一次 Gemini 请求，插件不会自动切分或拼接长文章；正文最多 4000、语音指令最多 1000 个 UTF-16 字符单元，解码后的 PCM 音频最多 12 MiB，超限会直接报错。多数中英文字符占 1 个单元，部分 emoji 等字符占 2 个
 - 返回的音频可以是裸 PCM（`audio/L16`、`audio/pcm` 等）或带 RIFF 头的 WAV（`audio/wav`）；两者都只接受 16-bit 单声道 PCM，WAV 会在校验采样率与数据块后重新封装为标准 44 字节头
@@ -73,20 +78,20 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 
 ## 语音指令与音频标签
 
-插件会将正文原样发送给 Gemini，不会改写其中的标签，因此音频标签无需额外开关；但两代模型的写法不同：
+插件会将正文原样发送给 Gemini，不会改写其中的标签，因此音频标签无需额外开关。3.8 与手动选择的旧版格式写法不同：
 
-| | Gemini 3.8 系列 | 3.1 / 2.5 旧版 |
+| | Gemini 3.8 系列 | 旧版格式（手动选择） |
 | --- | --- | --- |
 | 整段风格 | 填在「语音指令」中，例如"轻声、语速放慢" | 同左 |
 | 局部效果 | 正文中使用尖括号标签，如 `<short pause>`、`<laugh>`、`<sigh>`、`<breath>` | 正文中使用方括号标签，如 `[short pause]`、`[whispers]` |
 
-示例（3.8 系列）：
+示例（3.8 系列，也是旧模型自动改发后的写法）：
 
 ```text
 你好。<short pause> 我们开始吧。<laugh>
 ```
 
-示例（3.1 / 2.5 旧版）：
+示例（仅旧版格式）：
 
 ```text
 [whispers] 你好。[short pause] 我们开始吧。

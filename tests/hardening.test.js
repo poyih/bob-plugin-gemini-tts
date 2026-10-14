@@ -281,7 +281,12 @@ test('each model offered in info.json has an explicit capability and the default
     const info = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'info.json'), 'utf8'));
     const menu = info.options.find((option) => option.identifier === 'model');
     const models = require('../lib/models');
-    for (const item of menu.menuValues) assert.ok(Object.hasOwn(models.capabilities, item.value), item.value);
+    for (const item of menu.menuValues) {
+        assert.ok(
+            Object.hasOwn(models.capabilities, item.value) || Object.hasOwn(models.retiredModels, item.value),
+            item.value
+        );
+    }
     const harness = createHarness({ options: { model: '' } });
     assert.equal(harness.context.getModel(), menu.defaultValue);
 });

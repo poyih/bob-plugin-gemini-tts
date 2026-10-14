@@ -1,6 +1,6 @@
 {
   "identifier": "bob-plugin-gemini-tts",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "category": "tts",
   "name": "Gemini TTS",
   "summary": "使用 Google Gemini TTS API 进行语音合成。",
@@ -36,13 +36,13 @@
       "type": "menu",
       "title": "模型",
       "defaultValue": "gemini-3.8-flash-tts",
-      "desc": "3.8 系列为正式版，逐字朗读正文，语音指令通过 speechMetadata 生效；3.1 / 2.5 为旧版预览模型",
+      "desc": "3.8 系列为正式版，逐字朗读正文。3.1 / 2.5 预览模型最早于 2026-11-17 关闭，选中时会自动改用 gemini-3.8-flash-tts",
       "menuValues": [
         { "title": "Gemini 3.8 Flash TTS", "value": "gemini-3.8-flash-tts" },
         { "title": "Gemini 3.8 Flash-Lite TTS", "value": "gemini-3.8-flash-lite-tts" },
-        { "title": "Gemini 3.1 Flash TTS（旧版）", "value": "gemini-3.1-flash-tts-preview" },
-        { "title": "Gemini 2.5 Pro TTS（旧版）", "value": "gemini-2.5-pro-preview-tts" },
-        { "title": "Gemini 2.5 Flash TTS（旧版）", "value": "gemini-2.5-flash-preview-tts" }
+        { "title": "Gemini 3.1 Flash TTS（最早11月17日停用，改用 3.8）", "value": "gemini-3.1-flash-tts-preview" },
+        { "title": "Gemini 2.5 Pro TTS（最早11月17日停用，改用 3.8）", "value": "gemini-2.5-pro-preview-tts" },
+        { "title": "Gemini 2.5 Flash TTS（最早11月17日停用，改用 3.8）", "value": "gemini-2.5-flash-preview-tts" }
       ]
     },
     {

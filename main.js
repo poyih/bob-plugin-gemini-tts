@@ -1,6 +1,7 @@
 // Bob TTS Plugin - Google Gemini TTS
 // 使用 Google Gemini TTS API 进行语音合成
-// 支持 Gemini 3.8 Flash / 3.8 Flash-Lite TTS，以及旧版 3.1 Flash / 2.5 Pro / 2.5 Flash TTS
+// 支持 Gemini 3.8 Flash / 3.8 Flash-Lite TTS。
+// 3.1 Flash / 2.5 Pro / 2.5 Flash TTS 预览模型已停用路由到 gemini-3.8-flash-tts。
 
 var BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 var LOG_PREFIX = '[bob-plugin-gemini-tts]';
@@ -921,6 +922,16 @@ function isValidHostname(value) {
     return true;
 }
 
+function replaceFixedModelSegment(pathValue, rawSegment, replacement) {
+    var marker = '/models/' + rawSegment;
+    var at = pathValue.indexOf(marker);
+    if (at === -1) {
+        throw endpointError('固定模型路径无法改写');
+    }
+    return pathValue.substring(0, at) + '/models/' + encodeURIComponent(replacement) +
+        pathValue.substring(at + marker.length);
+}
+
 function resolveApiEndpoint() {
     var configuredModel = getModel();
     if (!/^[A-Za-z0-9._-]{1,100}$/.test(configuredModel)) {
@@ -995,8 +1006,10 @@ function resolveApiEndpoint() {
 
     var pathForMatch = path.replace(/\/+$/, '');
     var outputPath = path;
-    var effectiveModel = configuredModel;
-    var encodedModel = encodeURIComponent(configuredModel);
+    var configuredRoute = SPEECH_MODELS.routeSpeechModel(configuredModel);
+    var effectiveModel = configuredRoute.model;
+    var retiredFrom = configuredRoute.retiredFrom;
+    var encodedModel = encodeURIComponent(effectiveModel);
 
     if (!pathForMatch) {
         outputPath = '/v1beta/models/' + encodedModel + ':generateContent';
@@ -1019,6 +1032,12 @@ function resolveApiEndpoint() {
             if (!/^[A-Za-z0-9._-]{1,100}$/.test(effectiveModel)) {
                 throw endpointError('固定模型路径中的模型名称无效');
             }
+            var pathRoute = SPEECH_MODELS.routeSpeechModel(effectiveModel);
+            if (pathRoute.retiredFrom) {
+                outputPath = replaceFixedModelSegment(outputPath, fixedModelMatch[1], pathRoute.model);
+            }
+            effectiveModel = pathRoute.model;
+            retiredFrom = pathRoute.retiredFrom;
         }
         // Any other non-root path is a complete custom endpoint and is kept intact.
     }
@@ -1027,6 +1046,7 @@ function resolveApiEndpoint() {
         url: protocol + '://' + authority + outputPath + query,
         configuredModel: configuredModel,
         effectiveModel: effectiveModel,
+        retiredFrom: retiredFrom,
         isLoopback: isLoopback
     };
 }
@@ -1424,6 +1444,7 @@ function tts(query, completion) {
         ' instructions=' + (instructions ? 'on' : 'off') +
         ' request=' + (requestFormat === 'legacy' ? 'legacy-prompt' : 'verbatim') +
         ' model=' + sanitizeLogValue(model, apiKey) +
+        (endpoint.retiredFrom ? ' retired_from=' + sanitizeLogValue(endpoint.retiredFrom, apiKey) : '') +
         ' voice=' + sanitizeLogValue(voice, apiKey));
 
     var cacheKey = makeCacheKey(text, query.lang, endpoint.url, model, voice, instructions, apiKey, requestFormat);
