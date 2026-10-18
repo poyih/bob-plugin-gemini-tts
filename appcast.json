@@ -2,6 +2,14 @@
   "identifier": "bob-plugin-gemini-tts",
   "versions": [
     {
+      "version": "1.3.3",
+      "desc": "按实际请求模型声明支持语言，泰语、瑞典语和芬兰语仅在 Flash 模型启用，移除未列入官方支持范围的乌克兰语，并在请求前检查语种。修复发布工具在显式指定的 --artifact 文件不存在时静默改用默认构建的问题。",
+      "sha256": "174ceb301e88408bc603ef1eac5edc0393482e5724638cca97f55c0afbed0928",
+      "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.3.3/gemini-tts-1.3.3.bobplugin",
+      "minBobVersion": "1.20.0",
+      "timestamp": 1792301129000
+    },
+    {
       "version": "1.3.2",
       "desc": "将最早于 2026-11-17 关闭的 Gemini 3.1 / 2.5 TTS 预览模型自动改发到 gemini-3.8-flash-tts，并在设置中标明停用日期。",
       "sha256": "a670255e0540040132309cad0a268edd079e7633cb38e9aa90874609a4ad544b",
