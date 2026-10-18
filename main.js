@@ -795,14 +795,14 @@ function audioToWav(audioBase64, mimeType) {
 // ---- Bob Plugin Interface ----
 
 function supportLanguages() {
-    return [
-        'auto', 'zh-Hans', 'zh-Hant', 'en', 'ja', 'ko',
-        'fr', 'de', 'es', 'it', 'pt', 'pt-br', 'ru',
-        'ar', 'th', 'vi', 'id', 'ms', 'tr', 'pl',
-        'nl', 'sv', 'da', 'nb', 'fi', 'el', 'cs',
-        'ro', 'hu', 'sk', 'uk', 'bg', 'hr', 'hi',
-        'bn', 'ta', 'te', 'ml', 'he', 'fil'
-    ];
+    var model = getModel();
+    try {
+        model = resolveApiEndpoint().effectiveModel;
+    } catch (e) {
+        // Bob can ask for languages while the endpoint is still being edited.
+        // Validation and playback report configuration errors separately.
+    }
+    return SPEECH_MODELS.getSupportedLanguages(model);
 }
 
 function pluginTimeoutInterval() {
@@ -1432,6 +1432,12 @@ function tts(query, completion) {
     var endpoint = resolveApiEndpoint();
     var apiKey = readOption('apiKey');
     var model = endpoint.effectiveModel;
+    if (query.lang && SPEECH_MODELS.isKnownModel(model) &&
+        SPEECH_MODELS.getSupportedLanguages(model).indexOf(query.lang) === -1) {
+        finish({ error: makeParamError('当前模型未声明支持该语言',
+            '请改用支持该语种的模型；语言范围见插件说明') });
+        return;
+    }
     var voice = getVoice();
     var instructions = readOption('instructions');
     var requestFormat = SPEECH_MODELS.resolveRequestFormat(model, readOption('requestFormat'));

@@ -161,6 +161,66 @@ class ReleaseTests(unittest.TestCase):
             release.prepare_appcast(self.root, artifact, self.notes, self.timestamp)
         self.assertEqual((self.root / 'appcast.json').read_bytes(), before)
 
+    def test_missing_explicit_artifact_fails_without_building_or_contacting_github(self):
+        artifact = self.root / 'provided' / release.release_filename(self.info)
+        before = (self.root / 'appcast.json').read_bytes()
+        for command, options in [('prepare', []), ('prepare', ['--github']), ('finalize', [])]:
+            with self.subTest(command=command, options=options):
+                with mock.patch.object(release, 'build_package') as build, \
+                        mock.patch.object(release, 'verify_github') as github, \
+                        mock.patch.object(release, 'read_url') as download:
+                    with self.assertRaisesRegex(ValueError, 'Explicit artifact does not exist') as error:
+                        release.main([command, '--root', str(self.root), '--artifact', str(artifact)] + options)
+                    self.assertIn(str(artifact), str(error.exception))
+                    build.assert_not_called()
+                    github.assert_not_called()
+                    download.assert_not_called()
+                self.assertFalse(artifact.exists())
+                self.assertFalse(self.output.exists())
+                self.assertEqual((self.root / 'appcast.json').read_bytes(), before)
+
+    def test_prepare_and_finalize_automatically_build_the_default_artifact(self):
+        artifact = self.output / release.release_filename(self.info)
+        for command in ['prepare', 'finalize']:
+            with self.subTest(command=command):
+                if self.output.exists():
+                    shutil.rmtree(self.output)
+                before = (self.root / 'appcast.json').read_bytes()
+                with mock.patch.object(release, 'verify_github', return_value=self.timestamp) as github, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    release.main([command, '--root', str(self.root)])
+                candidate = self.output / 'appcast.json'
+                release.verify_package(self.root, artifact, candidate)
+                if command == 'finalize':
+                    github.assert_called_once_with(self.info, artifact.resolve())
+                    self.assertEqual((self.root / 'appcast.json').read_bytes(), candidate.read_bytes())
+                    self.assertEqual(release.read_json(candidate)['versions'][0]['timestamp'], self.timestamp)
+                else:
+                    github.assert_not_called()
+                    self.assertEqual((self.root / 'appcast.json').read_bytes(), before)
+
+    def test_prepare_and_finalize_use_an_existing_explicit_artifact_directory(self):
+        for command in ['prepare', 'finalize']:
+            with self.subTest(command=command):
+                artifact = release.build_package(self.root, self.root / 'provided' / command)
+                before_artifact = artifact.read_bytes()
+                before_feed = (self.root / 'appcast.json').read_bytes()
+                with mock.patch.object(release, 'build_package') as build, \
+                        mock.patch.object(release, 'verify_github', return_value=self.timestamp) as github, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    release.main([command, '--root', str(self.root), '--artifact', str(artifact)])
+                build.assert_not_called()
+                self.assertEqual(artifact.read_bytes(), before_artifact)
+                self.assertFalse(self.output.exists())
+                candidate = artifact.parent / 'appcast.json'
+                release.verify_package(self.root, artifact, candidate)
+                if command == 'finalize':
+                    github.assert_called_once_with(self.info, artifact)
+                    self.assertEqual((self.root / 'appcast.json').read_bytes(), candidate.read_bytes())
+                else:
+                    github.assert_not_called()
+                    self.assertEqual((self.root / 'appcast.json').read_bytes(), before_feed)
+
     def test_finalize_verifies_uploaded_bytes_and_uses_the_actual_publication_time(self):
         artifact = self.build()
         metadata = self.remote_release(artifact)

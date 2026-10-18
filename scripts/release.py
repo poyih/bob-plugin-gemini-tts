@@ -280,6 +280,8 @@ def main(argv=None):
         print('Verified %s (SHA-256 %s)' % (artifact, artifact_hash(artifact)))
     else:
         if not artifact.exists():
+            if args.artifact is not None:
+                raise ValueError('Explicit artifact does not exist: ' + str(artifact))
             artifact = build_package(root, output_dir)
         verify_package(root, artifact)
         timestamp = (verify_github(info, artifact) if args.command == 'finalize' or args.github
