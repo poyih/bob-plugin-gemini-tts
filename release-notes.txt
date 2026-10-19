@@ -1,1 +1,1 @@
-按实际请求模型声明支持语言，泰语、瑞典语和芬兰语仅在 Flash 模型启用，移除未列入官方支持范围的乌克兰语，并在请求前检查语种。修复发布工具在显式指定的 --artifact 文件不存在时静默改用默认构建的问题。
+按 Gemini 3.8 官方语言表补全支持语言：两款 3.8 模型共同声明的语言由 33 种增至 86 种，新增语言包括加泰罗尼亚语、波斯语、粤语、爱沙尼亚语、乌兹别克语等；3.8 Flash 独有的语言由 3 种增至 27 种，新增语言包括斯瓦希里语、立陶宛语、斯洛文尼亚语、缅甸语等；并补充 no、tl、jw、pt-pt、sr-Cyrl、sr-Latn 等 Bob 语言代码。语种不在当前模型支持范围内或模型返回 finishReason LANGUAGE 时，改为返回 Bob 的 unsupportedLanguage 错误；finishReason CONTINUATION 与 BLOCKLIST 分别按输出上限和内容过滤提示。

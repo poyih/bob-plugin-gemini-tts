@@ -835,6 +835,14 @@ function makeParamError(message, addition) {
     return error;
 }
 
+function makeLanguageError(message, addition) {
+    var error = { type: 'unsupportedLanguage', message: message };
+    if (addition) {
+        error.addition = addition;
+    }
+    return error;
+}
+
 function endpointError(message) {
     var error = new Error(message);
     error.pluginError = makeParamError('自定义 API 地址无效', message);
@@ -1286,14 +1294,22 @@ function inspectAudioResponse(responseData, secret) {
         throw responseError('模型未确认音频完整性，已拒绝结果', '缺少有效的 finishReason');
     }
     if (finishReason !== 'STOP') {
-        if (finishReason === 'MAX_TOKENS') {
+        // CONTINUATION also means the per-request output limit cut the audio short.
+        if (finishReason === 'MAX_TOKENS' || finishReason === 'CONTINUATION') {
             throw responseError(
                 '音频生成达到输出上限，已丢弃可能被截断的音频',
-                'finishReason: MAX_TOKENS' + finishMessage
+                'finishReason: ' + finishReason + finishMessage
             );
         }
+        if (finishReason === 'LANGUAGE') {
+            var languageError = new Error('模型不支持该文本的语言，无法生成音频');
+            languageError.pluginError = makeLanguageError(languageError.message,
+                'finishReason: LANGUAGE' + finishMessage);
+            throw languageError;
+        }
         if (finishReason === 'SAFETY' || finishReason === 'RECITATION' ||
-            finishReason === 'PROHIBITED_CONTENT' || finishReason === 'SPII') {
+            finishReason === 'PROHIBITED_CONTENT' || finishReason === 'SPII' ||
+            finishReason === 'BLOCKLIST') {
             throw responseError(
                 '内容被模型过滤，无法生成完整音频',
                 'finishReason: ' + finishReason + finishMessage
@@ -1434,7 +1450,7 @@ function tts(query, completion) {
     var model = endpoint.effectiveModel;
     if (query.lang && SPEECH_MODELS.isKnownModel(model) &&
         SPEECH_MODELS.getSupportedLanguages(model).indexOf(query.lang) === -1) {
-        finish({ error: makeParamError('当前模型未声明支持该语言',
+        finish({ error: makeLanguageError('当前模型未声明支持该语言',
             '请改用支持该语种的模型；语言范围见插件说明') });
         return;
     }
