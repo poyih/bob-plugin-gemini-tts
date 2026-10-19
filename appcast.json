@@ -2,6 +2,14 @@
   "identifier": "bob-plugin-gemini-tts",
   "versions": [
     {
+      "version": "1.4.0",
+      "desc": "新增「自定义声音 ID」选项：可填写 Gemini 3.8 扩展声音库中的声音 ID，或声音设计、声音复刻得到的 voice_... / voicekey_...，填写后覆盖声音菜单（仅限 3.8 格式）；输入框与 API Key 一样默认隐藏内容，voicekey 也会从错误信息和日志中隐去。按 Gemini 3.8 官方语言表补全支持语言：两款 3.8 模型共同声明的语言由 33 种增至 86 种，新增语言包括加泰罗尼亚语、波斯语、粤语、爱沙尼亚语、乌兹别克语等；3.8 Flash 独有的语言由 3 种增至 27 种，新增语言包括斯瓦希里语、立陶宛语、斯洛文尼亚语、缅甸语等；并补充 no、tl、jw、pt-pt、sr-Cyrl、sr-Latn 等 Bob 语言代码。语种不在当前模型支持范围内或模型返回 finishReason LANGUAGE 时，改为返回 Bob 的 unsupportedLanguage 错误；finishReason CONTINUATION 与 BLOCKLIST 分别按输出上限和内容过滤提示。",
+      "sha256": "80503dff793c3e84aa247863a24712c0473dd58c894830e628092b1c36f605da",
+      "url": "https://github.com/poyih/bob-plugin-gemini-tts/releases/download/v1.4.0/gemini-tts-1.4.0.bobplugin",
+      "minBobVersion": "1.20.0",
+      "timestamp": 1792409000000
+    },
+    {
       "version": "1.3.3",
       "desc": "按实际请求模型声明支持语言，泰语、瑞典语和芬兰语仅在 Flash 模型启用，移除未列入官方支持范围的乌克兰语，并在请求前检查语种。修复发布工具在显式指定的 --artifact 文件不存在时静默改用默认构建的问题。",
       "sha256": "174ceb301e88408bc603ef1eac5edc0393482e5724638cca97f55c0afbed0928",
