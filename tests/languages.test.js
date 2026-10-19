@@ -6,7 +6,11 @@ const { createHarness, callTts, successResponse } = require('./harness');
 
 const FLASH = 'gemini-3.8-flash-tts';
 const LITE = 'gemini-3.8-flash-lite-tts';
-const FLASH_ONLY = ['th', 'sv', 'fi'];
+const FLASH_ONLY = [
+    'th', 'sv', 'fi', 'ba', 'bem', 'crh', 'dyu', 'dz', 'gn', 'ig',
+    'kab', 'lb', 'lt', 'ltg', 'my', 'oc', 'pag', 'sd', 'sl', 'so',
+    'sq', 'ss', 'st', 'sw', 'tg', 'ti', 'ug'
+];
 const RETIRED = [
     'gemini-3.1-flash-tts-preview',
     'gemini-2.5-pro-preview-tts',
@@ -28,6 +32,20 @@ test('language discovery follows the selected model and reflects option changes'
         assert.equal(new Set(languages).size, languages.length);
     }
     assert.equal(harness.requests.length, 0);
+});
+
+test('both models declare the shared official languages and their Bob code aliases', () => {
+    const shared = [
+        'yue', 'ca', 'fa', 'et', 'ckb', 'mni', 'ks', 'uz', 'az', 'azb',
+        'no', 'nb', 'tl', 'fil', 'jv', 'jw', 'pt-pt', 'sr', 'sr-Cyrl', 'sr-Latn'
+    ];
+    // Not in the official table, or only for a script the Bob code does not name.
+    const undeclared = ['uk', 'ur', 'cy', 'yo', 'zu', 'ku', 'tw', 'ace', 'wyw'];
+    for (const model of [FLASH, LITE]) {
+        const languages = createHarness({ options: { model } }).context.supportLanguages();
+        for (const lang of shared) assert.ok(languages.includes(lang), model + ': ' + lang);
+        for (const lang of undeclared) assert.ok(!languages.includes(lang), model + ': ' + lang);
+    }
 });
 
 test('a fixed endpoint model determines language coverage instead of the menu', () => {
@@ -97,7 +115,7 @@ test('unsupported languages fail before transport even when another model cached
     harness.context.$option.model = LITE;
     for (const lang of FLASH_ONLY.concat('uk')) {
         const output = await callTts(harness, 'สวัสดี', lang);
-        assert.equal(output.error.type, 'param');
+        assert.equal(output.error.type, 'unsupportedLanguage');
         assert.match(output.error.message, /语言/);
     }
     harness.context.$option.model = FLASH;

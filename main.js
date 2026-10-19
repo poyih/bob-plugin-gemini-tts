@@ -12,6 +12,7 @@ var VALIDATION_TOTAL_TIMEOUT_MS = 60 * 1000;
 var VALIDATION_ATTEMPT_TIMEOUT_SECONDS = 30;
 var MAX_TTS_TEXT_CHARS = 4000;
 var MAX_INSTRUCTIONS_CHARS = 1000;
+var MAX_CUSTOM_VOICE_CHARS = 16384;
 var MAX_PCM_BYTES = 12 * 1024 * 1024;
 var WAV_HEADER_SCAN_BYTES = 4096;
 var MAX_WAV_CHUNKS = 64;
@@ -81,9 +82,17 @@ function safeStringify(value, secret) {
     return parts.length ? '{' + parts.join(', ') + '}' : redactSecret(String(value), secret);
 }
 
+// secret is one value or a list of values; empty entries are ignored.
 function redactSecret(value, secret) {
     var str = value == null ? '' : String(value);
-    return secret ? str.split(String(secret)).join('[REDACTED]') : str;
+    var secrets = Array.isArray(secret) ? secret : [secret];
+    var i;
+    for (i = 0; i < secrets.length; i++) {
+        if (secrets[i]) {
+            str = str.split(String(secrets[i])).join('[REDACTED]');
+        }
+    }
+    return str;
 }
 
 function sanitizeLogValue(value, secret) {
@@ -93,6 +102,20 @@ function sanitizeLogValue(value, secret) {
         return str.substring(0, 197) + '...';
     }
     return str;
+}
+
+// A stateless replication key carries the encrypted voice profile itself, so it
+// is redacted like the API key from errors, logs and result metadata.
+function isVoiceKey(voice) {
+    return /^voicekey_/i.test(voice);
+}
+
+function requestSecrets(apiKey, voice) {
+    return isVoiceKey(voice) ? [apiKey, voice] : [apiKey];
+}
+
+function describeVoice(voice, secret) {
+    return isVoiceKey(voice) ? 'voicekey_[REDACTED]' : sanitizeLogValue(voice, secret);
 }
 
 function logInfo(message) {
@@ -819,7 +842,7 @@ function getModel() {
 }
 
 function getVoice() {
-    return readOption('voice') || 'Kore';
+    return readOption('customVoice') || readOption('voice') || 'Kore';
 }
 
 function endsWith(str, suffix) {
@@ -829,6 +852,14 @@ function endsWith(str, suffix) {
 
 function makeParamError(message, addition) {
     var error = { type: 'param', message: message };
+    if (addition) {
+        error.addition = addition;
+    }
+    return error;
+}
+
+function makeLanguageError(message, addition) {
+    var error = { type: 'unsupportedLanguage', message: message };
     if (addition) {
         error.addition = addition;
     }
@@ -1077,15 +1108,27 @@ function validateOptions() {
             '最多允许 ' + MAX_INSTRUCTIONS_CHARS + ' 个 UTF-16 字符'
         );
     }
-    if (!/^[A-Za-z0-9._-]{1,100}$/.test(getVoice())) {
+    var customVoice = readOption('customVoice');
+    if (customVoice) {
+        if (customVoice.length > MAX_CUSTOM_VOICE_CHARS || !/^[\x21-\x7e]+$/.test(customVoice)) {
+            return makeParamError('自定义声音 ID 无效',
+                '只能包含 ASCII 字母、数字和符号，不能有空格，最多 ' + MAX_CUSTOM_VOICE_CHARS + ' 个字符');
+        }
+    } else if (!/^[A-Za-z0-9._-]{1,100}$/.test(getVoice())) {
         return makeParamError('声音名称无效', '请从插件设置中的声音列表重新选择');
     }
 
+    var requestFormat;
     try {
         var endpoint = resolveApiEndpoint();
-        SPEECH_MODELS.resolveRequestFormat(endpoint.effectiveModel, readOption('requestFormat'));
+        requestFormat = SPEECH_MODELS.resolveRequestFormat(endpoint.effectiveModel, readOption('requestFormat'));
     } catch (e) {
         return e.pluginError || makeParamError('自定义 API 地址无效', e.message || String(e));
+    }
+    // Only the 3.8 request carries voiceConfig.voice; the legacy one names a preset voice.
+    if (customVoice && requestFormat === 'legacy') {
+        return makeParamError('自定义声音 ID 仅支持 3.8 格式',
+            '旧版格式只能使用预置声音；请清空自定义声音 ID，或将请求格式改为 3.8 格式');
     }
     return null;
 }
@@ -1286,14 +1329,22 @@ function inspectAudioResponse(responseData, secret) {
         throw responseError('模型未确认音频完整性，已拒绝结果', '缺少有效的 finishReason');
     }
     if (finishReason !== 'STOP') {
-        if (finishReason === 'MAX_TOKENS') {
+        // CONTINUATION also means the per-request output limit cut the audio short.
+        if (finishReason === 'MAX_TOKENS' || finishReason === 'CONTINUATION') {
             throw responseError(
                 '音频生成达到输出上限，已丢弃可能被截断的音频',
-                'finishReason: MAX_TOKENS' + finishMessage
+                'finishReason: ' + finishReason + finishMessage
             );
         }
+        if (finishReason === 'LANGUAGE') {
+            var languageError = new Error('模型不支持该文本的语言，无法生成音频');
+            languageError.pluginError = makeLanguageError(languageError.message,
+                'finishReason: LANGUAGE' + finishMessage);
+            throw languageError;
+        }
         if (finishReason === 'SAFETY' || finishReason === 'RECITATION' ||
-            finishReason === 'PROHIBITED_CONTENT' || finishReason === 'SPII') {
+            finishReason === 'PROHIBITED_CONTENT' || finishReason === 'SPII' ||
+            finishReason === 'BLOCKLIST') {
             throw responseError(
                 '内容被模型过滤，无法生成完整音频',
                 'finishReason: ' + finishReason + finishMessage
@@ -1368,6 +1419,7 @@ function requestSpeechAudio(config, completion) {
         now: nowMs,
         url: config.endpoint.url,
         apiKey: config.apiKey,
+        secrets: config.secrets,
         body: config.body,
         startedAt: config.startedAt,
         totalBudgetMs: config.totalBudgetMs,
@@ -1389,10 +1441,13 @@ function pluginValidate(completion) {
         return;
     }
     var endpoint = resolveApiEndpoint();
+    var apiKey = readOption('apiKey');
+    var voice = getVoice();
     requestSpeechAudio({
         endpoint: endpoint,
-        apiKey: readOption('apiKey'),
-        body: buildSpeechRequestBody('Hi', getVoice(), readOption('instructions'), endpoint.effectiveModel),
+        apiKey: apiKey,
+        secrets: requestSecrets(apiKey, voice),
+        body: buildSpeechRequestBody('Hi', voice, readOption('instructions'), endpoint.effectiveModel),
         startedAt: nowMs(),
         totalBudgetMs: VALIDATION_TOTAL_TIMEOUT_MS,
         attemptTimeoutSeconds: VALIDATION_ATTEMPT_TIMEOUT_SECONDS,
@@ -1434,11 +1489,13 @@ function tts(query, completion) {
     var model = endpoint.effectiveModel;
     if (query.lang && SPEECH_MODELS.isKnownModel(model) &&
         SPEECH_MODELS.getSupportedLanguages(model).indexOf(query.lang) === -1) {
-        finish({ error: makeParamError('当前模型未声明支持该语言',
+        finish({ error: makeLanguageError('当前模型未声明支持该语言',
             '请改用支持该语种的模型；语言范围见插件说明') });
         return;
     }
     var voice = getVoice();
+    var secrets = requestSecrets(apiKey, voice);
+    var voiceLabel = describeVoice(voice, apiKey);
     var instructions = readOption('instructions');
     var requestFormat = SPEECH_MODELS.resolveRequestFormat(model, readOption('requestFormat'));
     var requestId = nextRequestId();
@@ -1451,7 +1508,7 @@ function tts(query, completion) {
         ' request=' + (requestFormat === 'legacy' ? 'legacy-prompt' : 'verbatim') +
         ' model=' + sanitizeLogValue(model, apiKey) +
         (endpoint.retiredFrom ? ' retired_from=' + sanitizeLogValue(endpoint.retiredFrom, apiKey) : '') +
-        ' voice=' + sanitizeLogValue(voice, apiKey));
+        ' voice=' + voiceLabel);
 
     var cacheKey = makeCacheKey(text, query.lang, endpoint.url, model, voice, instructions, apiKey, requestFormat);
     var cachedEntry = getCachedAudioResult(cacheKey);
@@ -1459,7 +1516,7 @@ function tts(query, completion) {
         logTtsInfo(requestId, 'cache_hit', 'total_ms=' + (nowMs() - requestStartedAt) +
             ' age_ms=' + (nowMs() - cachedEntry.storedAt) +
             ' wav_base64_chars=' + cachedEntry.result.value.length);
-        finish({ result: createTtsResult(cachedEntry.result.value, model, voice, 'hit') });
+        finish({ result: createTtsResult(cachedEntry.result.value, model, voiceLabel, 'hit') });
         return;
     }
 
@@ -1479,6 +1536,7 @@ function tts(query, completion) {
     requestSpeechAudio({
         endpoint: endpoint,
         apiKey: apiKey,
+        secrets: secrets,
         body: requestBody,
         startedAt: requestStartedAt,
         totalBudgetMs: TTS_TOTAL_TIMEOUT_MS,
@@ -1499,7 +1557,7 @@ function tts(query, completion) {
             } else {
                 if (details.error) {
                     message += ' message=' + sanitizeLogValue(
-                        details.error.message + ' ' + (details.error.addition || ''), apiKey);
+                        details.error.message + ' ' + (details.error.addition || ''), secrets);
                 }
                 logTtsError(requestId, stage, message);
             }
@@ -1510,7 +1568,7 @@ function tts(query, completion) {
         }
         var audio = outcome.audio;
         if (audio) {
-            var cacheStored = setCachedAudioResult(cacheKey, createTtsResult(audio.wavBase64, model, voice, 'miss'));
+            var cacheStored = setCachedAudioResult(cacheKey, createTtsResult(audio.wavBase64, model, voiceLabel, 'miss'));
             var metrics = outcome.metrics;
             logTtsInfo(requestId, 'success', 'status=' + metrics.statusCode +
                 ' attempt=' + metrics.attempt +
@@ -1540,7 +1598,7 @@ function tts(query, completion) {
                 }
                 value = { error: error };
             } else {
-                value = { result: createTtsResult(audio.wavBase64, model, voice,
+                value = { result: createTtsResult(audio.wavBase64, model, voiceLabel,
                     i === 0 ? 'miss' : 'coalesced') };
             }
             if (i > 0) {

@@ -24,14 +24,15 @@ Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 最早于 202
 | 模型 | 否 | 默认 `gemini-3.8-flash-tts`，可选 3.8 Flash-Lite。三个旧预览 ID 会自动改发到 3.8 Flash |
 | 请求格式 | 否 | 默认按已知模型自动选择；未知模型或代理别名需明确选择「3.8 格式」或「旧版格式」 |
 | 声音 | 否 | 默认 `Kore`，可选 30 种预置声音 |
+| 自定义声音 ID | 否 | 填写后覆盖「声音」，可用声音库 ID 或 `voice_...`、`voicekey_...`，仅支持 3.8 格式，见下文 |
 | 语音指令 | 否 | 用于控制语音风格和语气，如"用欢快的语气朗读"，不会被朗读出来 |
 
 ### 模型选择
 
 | 模型 | 模型 ID | 状态 | 特点 |
 | --- | --- | --- | --- |
-| Gemini 3.8 Flash TTS | `gemini-3.8-flash-tts` | 正式版 | 表现力最强，支持 130 种语言（默认） |
-| Gemini 3.8 Flash-Lite TTS | `gemini-3.8-flash-lite-tts` | 正式版 | 更快、更省，支持 101 种语言，Google 推荐用它替代 3.1 Flash TTS |
+| Gemini 3.8 Flash TTS | `gemini-3.8-flash-tts` | 正式版 | 表现力最强，官方支持 130 多种语言（默认） |
+| Gemini 3.8 Flash-Lite TTS | `gemini-3.8-flash-lite-tts` | 正式版 | 更快、更省，官方支持 100 多种语言，Google 推荐用它替代 3.1 Flash TTS |
 | Gemini 3.1 Flash TTS | `gemini-3.1-flash-tts-preview` | 2026-11-17 起最早可关闭 | 不再直接请求，自动改用 `gemini-3.8-flash-tts` |
 | Gemini 2.5 Pro TTS | `gemini-2.5-pro-preview-tts` | 2026-11-17 起最早可关闭 | 同上 |
 | Gemini 2.5 Flash TTS | `gemini-2.5-flash-preview-tts` | 2026-11-17 起最早可关闭 | 同上 |
@@ -52,6 +53,21 @@ Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 最早于 202
 ### 预置声音
 
 Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalgethi, Laomedeia, Achernar, Alnilam, Schedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
+
+### 自定义声音
+
+除了上面的预置声音，Gemini 3.8 还可以使用以下声音，把对应 ID 填入「自定义声音 ID」即可。留空时使用「声音」菜单，验证按钮也会用同一个声音发送测试请求。
+
+- [扩展声音库](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation#voice-library)：数百种不同语言、口音和角色的声音，可在 [Google AI Studio](https://aistudio.google.com/generate-speech) 试听，或通过 `GET /v1beta/voices` 查询 ID
+- [声音设计](https://ai.google.dev/gemini-api/docs/generate-content/voice-design)：用文字描述生成的声音，ID 形如 `voice_...`
+- [声音复刻](https://ai.google.dev/gemini-api/docs/generate-content/voice-replication)：复刻经本人授权的声音，保存在项目中时 ID 形如 `voice_...`，不保存时得到 `voicekey_...` 密钥
+
+使用限制：
+
+- 只适用于 3.8 格式（`speechConfig.voiceConfig.voice`）。「请求格式」设为「旧版格式」时插件会直接报错
+- ID 只能包含不含空格的 ASCII 字符，最长 16384 个字符，首尾空白会被忽略
+- `voice_...` 保存在创建它的项目中，1 年未使用会被自动删除；`voicekey_...` 有效期 7 天，过期后需重新生成，见[官方说明](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation#custom-voice-limits)
+- `voicekey_...` 本身就是加密的声音档案，插件会像对待 API Key 一样，在错误信息、日志和返回给 Bob 的调试信息中隐去它；使用第三方代理时，代理会收到这个密钥
 
 ### 自定义 API 地址说明
 
@@ -102,11 +118,13 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 
 ## 支持语言
 
-插件按实际请求的模型向 Bob 声明支持语言：自定义地址中的标准模型路径优先于菜单选择，三个旧预览 ID 自动改用 3.8 Flash 后，也按 Flash 的能力声明。已知模型会在朗读前再次检查 Bob 提供的语种；未列入当前模型声明范围的语种会直接报错。
+插件按实际请求的模型向 Bob 声明支持语言：自定义地址中的标准模型路径优先于菜单选择，三个旧预览 ID 自动改用 3.8 Flash 后，也按 Flash 的能力声明。已知模型会在朗读前再次检查 Bob 提供的语种；未列入当前模型声明范围的语种会直接返回 Bob 的「不支持的语言」（`unsupportedLanguage`）错误，模型以 `finishReason: LANGUAGE` 拒绝时也一样。
 
-两款 3.8 模型共同声明的语言：中文（简体/繁体）、英语、日语、韩语、法语、德语、西班牙语、意大利语、葡萄牙语（含 pt-BR 变体）、俄语、阿拉伯语、越南语、印尼语、马来语、土耳其语、波兰语、荷兰语、丹麦语、挪威语、希腊语、捷克语、罗马尼亚语、匈牙利语、斯洛伐克语、保加利亚语、克罗地亚语、印地语、孟加拉语、泰米尔语、泰卢固语、马拉雅拉姆语、希伯来语、菲律宾语。
+声明范围以 [Google 官方语言表](https://ai.google.dev/gemini-api/docs/speech-generation#supported-languages) 为准，只包含能与官方条目一一对应的 [Bob 语言代码](https://bobtranslate.com/plugin/addition/language.html)。官方表中 Bob 没有对应代码的语言（如巴厘语、阿瓦德语、米佐语），以及只列出某种书写系统、而 Bob 代码不区分书写系统的条目（如阿拉伯字母的亚齐语），不在声明范围内。
 
-3.8 Flash 另声明泰语、瑞典语和芬兰语；3.8 Flash-Lite 的官方支持列表未包含这三种语言。两款模型的官方列表均未包含乌克兰语，因此插件不再声明支持。完整模型语言列表见 [Google 官方语言表](https://ai.google.dev/gemini-api/docs/speech-generation#supported-languages)。
+两款 3.8 模型共同声明的 86 种语言：中文（简体/繁体）、粤语、英语、日语、韩语、法语、德语、西班牙语、意大利语、葡萄牙语（含 pt-PT、pt-BR 变体）、俄语、阿拉伯语、越南语、印尼语、马来语、土耳其语、波兰语、荷兰语、丹麦语、挪威语（`nb`、`no`）、希腊语、捷克语、罗马尼亚语、匈牙利语、斯洛伐克语、保加利亚语、克罗地亚语、印地语、孟加拉语、泰米尔语、泰卢固语、马拉雅拉姆语、希伯来语、菲律宾语（`fil`、`tl`）、南非语、阿肯语、阿姆哈拉语、阿萨姆语、阿塞拜疆语、南阿塞拜疆语、白俄罗斯语、博杰普尔语、波斯尼亚语、加泰罗尼亚语、宿务语、中库尔德语、爱沙尼亚语、巴斯克语、波斯语、尼日利亚富拉语、加利西亚语、古吉拉特语、豪萨语、海地克里奥尔语、亚美尼亚语、伊洛卡诺语、冰岛语、爪哇语（`jv`、`jw`）、格鲁吉亚语、刚果语、基库尤语、哈萨克语、高棉语、卡纳达语、克什米尔语、柯尔克孜语、卢干达语、林加拉语、老挝语、拉脱维亚语、迈蒂利语、马其顿语、蒙古语、曼尼普尔语、马拉地语、马耳他语、尼泊尔语、北索托语、齐切瓦语、奥里亚语、旁遮普语、普什图语、卢旺达语、僧伽罗语、塞尔维亚语（含西里尔、拉丁字母）、乌兹别克语。
+
+3.8 Flash 另声明 27 种语言：泰语、瑞典语、芬兰语、巴什基尔语、本巴语、克里米亚鞑靼语、迪尤拉语、宗喀语、瓜拉尼语、伊博语、卡拜尔语、卢森堡语、立陶宛语、拉特加莱语、缅甸语、奥克语、邦阿西楠语、信德语、斯洛文尼亚语、索马里语、阿尔巴尼亚语、史瓦帝语、塞索托语、斯瓦希里语、塔吉克语、提格雷尼亚语、维吾尔语。3.8 Flash-Lite 的官方支持列表未包含这些语言。两款模型的官方列表均未包含乌克兰语和乌尔都语，因此插件不声明支持。
 
 未知模型或代理别名在 Bob 中保留上述 Flash 语言列表，并交由代理确认实际语种能力，插件不对未知模型执行严格的语种拦截。另支持 `auto` 自动语种识别，但这不保证模型支持声明列表之外的语言；官方未列出的语言也不代表每次请求都会失败。
 

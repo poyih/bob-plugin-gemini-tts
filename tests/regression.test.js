@@ -57,7 +57,7 @@ test('legacy TTS requests use an explicit audio-only prompt and transcript bound
     }
 });
 
-for (const finishReason of ['MAX_TOKENS', 'SAFETY', 'PROHIBITED_CONTENT']) {
+for (const finishReason of ['MAX_TOKENS', 'CONTINUATION', 'SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'LANGUAGE']) {
     test(`${finishReason} audio is rejected and never cached`, async () => {
         const harness = createHarness({
             responses: [
@@ -78,6 +78,28 @@ for (const finishReason of ['MAX_TOKENS', 'SAFETY', 'PROHIBITED_CONTENT']) {
         );
     });
 }
+
+test('finish reasons report the output limit, filtering, or an unsupported language', async () => {
+    for (const [finishReason, type, message] of [
+        ['MAX_TOKENS', 'api', /输出上限/],
+        ['CONTINUATION', 'api', /输出上限/],
+        ['BLOCKLIST', 'api', /过滤/],
+        ['LANGUAGE', 'unsupportedLanguage', /语言/],
+        ['OTHER', 'api', /未完成/]
+    ]) {
+        const harness = createHarness({
+            responses: [successResponse({ finishReason }), successResponse({ finishReason })]
+        });
+        const playback = await callTts(harness, 'Finish reason mapping.');
+        const validation = await callValidate(harness);
+        assert.equal(validation.result, false);
+        for (const error of [playback.error, validation.error]) {
+            assert.equal(error.type, type, finishReason);
+            assert.match(error.message, message, finishReason);
+            assert.equal(error.addition, 'finishReason: ' + finishReason);
+        }
+    }
+});
 
 test('TTS retries one transient 500 and returns the successful retry', async () => {
     const harness = createHarness({
