@@ -24,6 +24,7 @@ Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 最早于 202
 | 模型 | 否 | 默认 `gemini-3.8-flash-tts`，可选 3.8 Flash-Lite。三个旧预览 ID 会自动改发到 3.8 Flash |
 | 请求格式 | 否 | 默认按已知模型自动选择；未知模型或代理别名需明确选择「3.8 格式」或「旧版格式」 |
 | 声音 | 否 | 默认 `Kore`，可选 30 种预置声音 |
+| 自定义声音 ID | 否 | 填写后覆盖「声音」，可用声音库 ID 或 `voice_...`、`voicekey_...`，仅支持 3.8 格式，见下文 |
 | 语音指令 | 否 | 用于控制语音风格和语气，如"用欢快的语气朗读"，不会被朗读出来 |
 
 ### 模型选择
@@ -52,6 +53,21 @@ Gemini 3.1 Flash TTS、Gemini 2.5 Pro TTS 和 Gemini 2.5 Flash TTS 最早于 202
 ### 预置声音
 
 Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalgethi, Laomedeia, Achernar, Alnilam, Schedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
+
+### 自定义声音
+
+除了上面的预置声音，Gemini 3.8 还可以使用以下声音，把对应 ID 填入「自定义声音 ID」即可。留空时使用「声音」菜单，验证按钮也会用同一个声音发送测试请求。
+
+- [扩展声音库](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation#voice-library)：数百种不同语言、口音和角色的声音，可在 [Google AI Studio](https://aistudio.google.com/generate-speech) 试听，或通过 `GET /v1beta/voices` 查询 ID
+- [声音设计](https://ai.google.dev/gemini-api/docs/generate-content/voice-design)：用文字描述生成的声音，ID 形如 `voice_...`
+- [声音复刻](https://ai.google.dev/gemini-api/docs/generate-content/voice-replication)：复刻经本人授权的声音，保存在项目中时 ID 形如 `voice_...`，不保存时得到 `voicekey_...` 密钥
+
+使用限制：
+
+- 只适用于 3.8 格式（`speechConfig.voiceConfig.voice`）。「请求格式」设为「旧版格式」时插件会直接报错
+- ID 只能包含不含空格的 ASCII 字符，最长 16384 个字符，首尾空白会被忽略
+- `voice_...` 保存在创建它的项目中，1 年未使用会被自动删除；`voicekey_...` 有效期 7 天，过期后需重新生成，见[官方说明](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation#custom-voice-limits)
+- `voicekey_...` 本身就是加密的声音档案，插件会像对待 API Key 一样，在错误信息、日志和返回给 Bob 的调试信息中隐去它；使用第三方代理时，代理会收到这个密钥
 
 ### 自定义 API 地址说明
 
