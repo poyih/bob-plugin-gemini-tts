@@ -13,6 +13,8 @@ var VALIDATION_ATTEMPT_TIMEOUT_SECONDS = 30;
 var MAX_TTS_TEXT_CHARS = 4000;
 var MAX_INSTRUCTIONS_CHARS = 1000;
 var MAX_CUSTOM_VOICE_CHARS = 16384;
+// Catches a replication key even when an upstream message quotes only part of it.
+var VOICE_KEY_PATTERN = /voicekey_[^\s"'`]*/gi;
 var MAX_PCM_BYTES = 12 * 1024 * 1024;
 var WAV_HEADER_SCAN_BYTES = 4096;
 var MAX_WAV_CHUNKS = 64;
@@ -82,13 +84,15 @@ function safeStringify(value, secret) {
     return parts.length ? '{' + parts.join(', ') + '}' : redactSecret(String(value), secret);
 }
 
-// secret is one value or a list of values; empty entries are ignored.
+// secret is one value or a list of strings and patterns; empty entries are ignored.
 function redactSecret(value, secret) {
     var str = value == null ? '' : String(value);
     var secrets = Array.isArray(secret) ? secret : [secret];
     var i;
     for (i = 0; i < secrets.length; i++) {
-        if (secrets[i]) {
+        if (secrets[i] instanceof RegExp) {
+            str = str.replace(secrets[i], '[REDACTED]');
+        } else if (secrets[i]) {
             str = str.split(String(secrets[i])).join('[REDACTED]');
         }
     }
@@ -107,15 +111,15 @@ function sanitizeLogValue(value, secret) {
 // A stateless replication key carries the encrypted voice profile itself, so it
 // is redacted like the API key from errors, logs and result metadata.
 function isVoiceKey(voice) {
-    return /^voicekey_/i.test(voice);
+    return /voicekey_/i.test(voice);
 }
 
 function requestSecrets(apiKey, voice) {
-    return isVoiceKey(voice) ? [apiKey, voice] : [apiKey];
+    return isVoiceKey(voice) ? [apiKey, voice, VOICE_KEY_PATTERN] : [apiKey];
 }
 
-function describeVoice(voice, secret) {
-    return isVoiceKey(voice) ? 'voicekey_[REDACTED]' : sanitizeLogValue(voice, secret);
+function describeVoice(voice) {
+    return isVoiceKey(voice) ? 'voicekey_[REDACTED]' : voice;
 }
 
 function logInfo(message) {
@@ -1110,9 +1114,12 @@ function validateOptions() {
     }
     var customVoice = readOption('customVoice');
     if (customVoice) {
-        if (customVoice.length > MAX_CUSTOM_VOICE_CHARS || !/^[\x21-\x7e]+$/.test(customVoice)) {
+        // Quotes and backslashes are left over from copying a key out of JSON or code.
+        if (customVoice.length > MAX_CUSTOM_VOICE_CHARS || !/^[\x21-\x7e]+$/.test(customVoice) ||
+            /["'`\\]/.test(customVoice)) {
             return makeParamError('自定义声音 ID 无效',
-                '只能包含 ASCII 字母、数字和符号，不能有空格，最多 ' + MAX_CUSTOM_VOICE_CHARS + ' 个字符');
+                '只能包含 ASCII 字母、数字和符号，不能有空格、引号或反斜杠，最多 ' +
+                MAX_CUSTOM_VOICE_CHARS + ' 个字符');
         }
     } else if (!/^[A-Za-z0-9._-]{1,100}$/.test(getVoice())) {
         return makeParamError('声音名称无效', '请从插件设置中的声音列表重新选择');
@@ -1495,7 +1502,7 @@ function tts(query, completion) {
     }
     var voice = getVoice();
     var secrets = requestSecrets(apiKey, voice);
-    var voiceLabel = describeVoice(voice, apiKey);
+    var voiceLabel = describeVoice(voice);
     var instructions = readOption('instructions');
     var requestFormat = SPEECH_MODELS.resolveRequestFormat(model, readOption('requestFormat'));
     var requestId = nextRequestId();
@@ -1508,7 +1515,7 @@ function tts(query, completion) {
         ' request=' + (requestFormat === 'legacy' ? 'legacy-prompt' : 'verbatim') +
         ' model=' + sanitizeLogValue(model, apiKey) +
         (endpoint.retiredFrom ? ' retired_from=' + sanitizeLogValue(endpoint.retiredFrom, apiKey) : '') +
-        ' voice=' + voiceLabel);
+        ' voice=' + sanitizeLogValue(voiceLabel, apiKey));
 
     var cacheKey = makeCacheKey(text, query.lang, endpoint.url, model, voice, instructions, apiKey, requestFormat);
     var cachedEntry = getCachedAudioResult(cacheKey);
@@ -1613,7 +1620,7 @@ function tts(query, completion) {
             try {
                 target.finish(value);
             } catch (e) {
-                logTtsError(target.requestId, 'completion_error', sanitizeLogValue(e.message || e, apiKey));
+                logTtsError(target.requestId, 'completion_error', sanitizeLogValue(e.message || e, secrets));
             }
         }
     });

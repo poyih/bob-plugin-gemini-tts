@@ -103,7 +103,7 @@
       "defaultValue": "",
       "desc": "可选，填写后覆盖上方的声音选择。支持声音库中的声音 ID，以及声音设计或声音复刻得到的 voice_... 或 voicekey_...；仅限 3.8 格式",
       "textConfig": {
-        "type": "visible",
+        "type": "secure",
         "placeholderText": "如：voice_abc123"
       }
     },
