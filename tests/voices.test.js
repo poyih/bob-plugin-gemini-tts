@@ -14,11 +14,12 @@ function voiceOf(request) {
     return request.body.generationConfig.speechConfig.voiceConfig.voice;
 }
 
-test('info.json exposes the custom voice option that the runtime reads', () => {
+test('info.json exposes the custom voice option that the runtime reads, hidden like the API key', () => {
     const info = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'info.json'), 'utf8'));
     const option = info.options.find((item) => item.identifier === 'customVoice');
     assert.equal(option.type, 'text');
     assert.equal(option.defaultValue, '');
+    assert.equal(option.textConfig.type, 'secure');
 });
 
 test('a custom voice ID overrides the menu in playback and validation requests', async () => {
@@ -42,7 +43,11 @@ test('an empty custom voice keeps the menu voice', async () => {
 });
 
 test('malformed custom voice IDs are rejected before any request', async () => {
-    for (const customVoice of ['voice abc', 'voice_a\tb', 'voice_声音', LONGEST_VOICE + 'a']) {
+    // Quotes and backslashes come from copying a key out of JSON or code.
+    for (const customVoice of [
+        'voice abc', 'voice_a\tb', 'voice_声音', LONGEST_VOICE + 'a',
+        '"' + VOICE_KEY + '"', "'voice_abc'", '`voice_abc`', 'voice\\abc'
+    ]) {
         const harness = createHarness({ options: { customVoice } });
         const validation = await callValidate(harness);
         assert.equal(validation.result, false);
@@ -50,6 +55,7 @@ test('malformed custom voice IDs are rejected before any request', async () => {
         assert.match(validation.error.message, /自定义声音/);
         assert.ok((await callTts(harness, 'Rejected voice.')).error);
         assert.equal(harness.requests.length, 0);
+        assert.ok(!JSON.stringify([validation, harness.logs]).includes('Ab9-_'));
     }
 });
 
@@ -96,9 +102,46 @@ test('replication keys stay out of logs and result metadata while other IDs rema
     }
     assert.ok(!JSON.stringify(echoHarness.logs).includes(keyBody));
 
-    const idHarness = createHarness({ options: { customVoice: 'voice_abc123' }, responses: [successResponse()] });
-    assert.equal((await callTts(idHarness, 'Stored voice.')).result.raw.voice, 'voice_abc123');
-    assert.match(JSON.stringify(idHarness.logs), /voice=voice_abc123/);
+    // Other IDs keep their exact value in metadata; only the log line is shortened.
+    for (const voiceId of ['voice_abc123', 'voice_' + 'x'.repeat(294)]) {
+        const idHarness = createHarness({ options: { customVoice: voiceId }, responses: [successResponse()] });
+        assert.equal((await callTts(idHarness, 'Stored voice.')).result.raw.voice, voiceId);
+        assert.match(JSON.stringify(idHarness.logs), new RegExp('voice=' + voiceId.substring(0, 100)));
+    }
+});
+
+test('replication keys are redacted when an upstream error quotes only part of them', async () => {
+    const slashKey = 'voicekey_ab/cd+ef==' + 'Zz9'.repeat(100);
+    for (const [customVoice, echoed] of [
+        [VOICE_KEY, VOICE_KEY.substring(0, 120) + '...'],
+        [slashKey, slashKey.replace(/\//g, '\\/')],
+        ['id=' + VOICE_KEY, VOICE_KEY]
+    ]) {
+        const echo = httpErrorResponse(400, 'Invalid voice "' + echoed + '"');
+        const harness = createHarness({ options: { customVoice }, responses: [echo, echo] });
+        const playback = await callTts(harness, 'Partial echo.');
+        const validation = await callValidate(harness);
+        for (const error of [playback.error, validation.error]) {
+            assert.equal(error.message, 'Invalid voice "[REDACTED]"');
+        }
+        const logged = JSON.stringify(harness.logs);
+        for (const fragment of ['Ab9-_', 'cd+ef', 'Zz9']) assert.ok(!logged.includes(fragment), fragment);
+    }
+});
+
+test('a host completion error that includes the key is redacted in the log', () => {
+    let pending;
+    const harness = createHarness({
+        options: { customVoice: VOICE_KEY },
+        responses: [(request) => { pending = request; }]
+    });
+    harness.context.tts({ text: 'Host error.', lang: 'en' }, () => {
+        throw new Error('host failed with ' + VOICE_KEY);
+    });
+    pending.handler(successResponse());
+    const logged = JSON.stringify(harness.logs);
+    assert.match(logged, /completion_error/);
+    assert.ok(!logged.includes('Ab9-_'));
 });
 
 test('changing the custom voice does not reuse audio cached for another voice', async () => {

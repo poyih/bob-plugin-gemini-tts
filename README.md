@@ -65,9 +65,10 @@ Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Ence
 使用限制：
 
 - 只适用于 3.8 格式（`speechConfig.voiceConfig.voice`）。「请求格式」设为「旧版格式」时插件会直接报错
-- ID 只能包含不含空格的 ASCII 字符，最长 16384 个字符，首尾空白会被忽略
+- ID 只能包含 ASCII 字母、数字和符号，不能有空格、引号或反斜杠，最长 16384 个字符，首尾空白会被忽略。从 JSON 或代码里复制时，请去掉两侧的引号
 - `voice_...` 保存在创建它的项目中，1 年未使用会被自动删除；`voicekey_...` 有效期 7 天，过期后需重新生成，见[官方说明](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation#custom-voice-limits)
-- `voicekey_...` 本身就是加密的声音档案，插件会像对待 API Key 一样，在错误信息、日志和返回给 Bob 的调试信息中隐去它；使用第三方代理时，代理会收到这个密钥
+- 输入框与 API Key 一样默认隐藏内容
+- `voicekey_...` 本身就是加密的声音档案，插件会像对待 API Key 一样，在错误信息、日志和返回给 Bob 的调试信息中隐去它；上游错误只回显部分密钥时也会隐去。使用第三方代理时，代理会收到这个密钥
 
 ### 自定义 API 地址说明
 
